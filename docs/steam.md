@@ -148,8 +148,8 @@ same text to `$GITHUB_STEP_SUMMARY`:
   still exists, which is only right after SteamCMD.
 
 It runs in the `game` job right after SteamCMD or the seed (label `after SteamCMD` or `after seed`), and in
-every `install` lane (label `<implementation> <mode>`) and the `manual` lane
-(label `manual`) right after `Normalize game case`, so a failure such as a TS
+every `install` lane (label `<implementation> <mode>`) right after `Normalize game
+case`, and in the `manual` lane (label `manual`) right after `Unpack game`, so a failure such as a TS
 `GFFList ... not found in modules/<name>.mod` can be read against what the cached
 game really holds. The output is never an input to any cache key.
 
@@ -198,12 +198,15 @@ fixes this on Linux (elsewhere it prints a skip and exits 0):
   files scanned per tree) and at most 20 per-rename lines, then `... and N more`.
   The same text goes to `$GITHUB_STEP_SUMMARY`.
 
-It is an install-time step only. The `install` lanes and the `manual` lane run it
+It is an install-time step only. The `install` lanes run it
 after `Unpack game` has decrypted the cache and checked every file against the SHA-256
 inventory, and before `Game inventory`; the `game` job never runs it, so the cache
-is packed, and verified, with Steam's original spelling. Mod installers
-therefore see a case-normalized tree, the same view a case-insensitive Windows
-install gives them (`Modules/` and `modules/` are one directory there).
+is packed, and verified, with Steam's original spelling. Mod installers in the
+`install` lanes therefore see a case-normalized tree, the same view a case-insensitive
+Windows install gives them (`Modules/` and `modules/` are one directory there). The
+`manual` lane does not run it: its game tree keeps Steam's spelling and `manual.py`
+resolves plan paths case-insensitively instead (see
+[manual-lane.md](manual-lane.md#the-plan)).
 
 ## Secrets
 

@@ -22,24 +22,32 @@ human review rationale; step_ids explicitly associates any applicable mod steps
 (an empty list records reviewed, non-executable guidance). No review is inferred.
 
 Operations (unknown fields are errors):
-  {type: extract, source: PATH, destination: PATH} -- ZIP/tar/RAR/7z, fresh destination
-  {type: copy, source: PATH, destination: PATH, lowercase_names: BOOL?} -- file or
-   directory overlay. lowercase_names (default false) writes every created or
-   overwritten entry under its lowercased source name, matching the case-normalized
-   game tree and Windows' case-insensitive overwrite: an existing entry whose name
-   casefolds equal but differs in case is overwritten and renamed to lowercase, never
-   duplicated. The destination token's final component is lowercased unless an entry
-   whose casefold matches already exists, which is then reused as named. Two source
-   entries that lowercase alike, or two existing entries that casefold alike, block.
-   skip_existing (default false) leaves every destination FILE that already exists
-   (matched case-insensitively with lowercase_names) untouched and does not copy
-   that source file; directories are still merged.
+  {type: extract, source: PATH, destination: PATH} -- ZIP/tar/RAR/7z, fresh destination.
+   A "\\" in a member name is a directory separator (as Windows extractors treat
+   it); absolute names, drive letters and ".." are rejected after that.
+  {type: copy, source: PATH, destination: PATH, skip_existing: BOOL?} -- file or
+   directory overlay, merged the way Windows does: every destination component
+   (the token's own and each copied entry's) that matches an existing entry
+   case-insensitively is that entry, kept under its existing name and overwritten;
+   anything else is created under the name as given (a copied entry's own source
+   name). Nothing is renamed or lowercased. Two existing entries, or two source
+   entries, that differ only in case block. skip_existing (default false) leaves
+   every destination FILE that already exists (case-insensitively) untouched and
+   does not copy that source file; directories are still merged.
   {type: rename, source: GAME_PATH, destination: GAME_PATH, replace: BOOL?} -- move
    an existing file or directory within game. The destination must not exist
    unless replace is true, which replaces an existing file only (a directory on
    either side of a replacement is an error). Missing destination parents are
-   created.
-  {type: delete, path: PATH, missing_ok: BOOL?}
+   created. Both paths resolve case-insensitively; an existing destination keeps
+   its existing name. Source and destination may not be the same entry.
+  {type: delete, path: GAME_OR_EXTRACT_PATH, missing_ok: BOOL?, if_any_exists: [GAME_PATH,...]?}
+   -- path resolves case-insensitively. With if_any_exists (nonempty; requires
+   missing_ok: true) the delete happens only if at least one listed path exists
+   (case-insensitively); the step log records which.
+Case-insensitive resolution (copy/rename/delete targets, if_any_exists and every
+expected_files path) uses PyKotor's CaseAwarePath (pykotor.tools.path,
+PYKOTOR_REQUIREMENT; see case_resolve for what manual.py adds: ambiguity blocks,
+symlink and root checks). manual.py fails at startup if pykotor is missing.
   {type: patcher, patcher: PATH, sha256: HEX, argv: [ARG,...], cwd: PATH,
    success_log: PATH, success_markers: [EXACT_STRING,...],
    failure_regex: [REGEX,...], expected_files: {GAME_PATH: HEX,...}?,
@@ -81,12 +89,17 @@ DISPLAY set. On failure a best-effort root window screenshot (ImageMagick
 `import`, if present) is stored next to the private step log and visible window
 names are logged; neither masks the original error.
 Paths start with {archives}/, {extract}/ or {game}/. Extract writes only under
-{extract}; copy reads archives/extract and writes game; delete and rename write game.
+{extract}; copy reads archives/extract and writes game; rename writes game; delete
+writes game or extract.
 Patcher and cwd must be in archives/extract. argv explicitly names the original
 patcher as argv[0], or argv[1] after an absolute wine/wine64 executable. No shell,
 substitution, guessed flags, download, plan generation, or automatic approval.
 Tokens in argv expand literally; Windows arguments/paths must be supplied by
 the reviewer. Commands are trusted external programs, NOT sandboxed.
+patcher and gui_patcher run argv as given, without a shell, in a new session (the
+whole process group is killed when the step ends), stdin /dev/null and stdout plus
+stderr on one pipe that a thread copies into the private step log (a regular-file
+stdout makes frozen Windows Pythons such as HoloPatcher abort at startup under Wine).
 
 --game-dir must be an existing, nonempty, fresh vanilla tree supplied by the
 operator (vanilla provenance cannot be inferred). --work-dir must not exist.
@@ -94,11 +107,26 @@ All roots must be disjoint. The work directory, logs, snapshots and report are
 private (0700/0600). Report must be outside game/archives and not preexist.
 Snapshots copy every regular file, including empty directories; symlinks and
 special files are rejected. Manifests cover paths, kinds, modes, sizes and SHA256.
+SHA256 digests are cached per process by (device, inode) with size, mtime_ns and
+ctime_ns: an unchanged inode is not re-read, any write (even one that restores
+size and mtime) moves ctime and forces a fresh hash, and files changed within
+RACY_NS of a hash are never cached (see DIGEST_CACHE). Every manifest still walks
+and lstats the whole tree.
 Every step gets one deadline (default 1800 seconds). Extraction is bounded to
 64 GiB and 100000 entries and reserves space for a full staged rollback on the
-game filesystem. Snapshot admission budgets a full copy plus rollback space.
-Only the last successful checkpoint's snapshot is retained by default
-(--keep-snapshots); failed checkpoints are always preserved. Failure/interrupt
+game filesystem. Each executed step has a complete pre-step snapshot in its
+checkpoint, verified against the pre-step manifest of the live tree before the
+step runs. With the default --keep-snapshots 1 the first snapshot is a full copy
+and each later one is the previous step's snapshot advanced in place: it is moved
+to the new checkpoint and only entries whose manifest entry changed are rewritten
+(changed files are unlinked and copied as new inodes, never written in place; the
+game tree never shares inodes with a snapshot). The previous checkpoint keeps its
+before/after manifests and its receipt records snapshot_advanced_to. With
+--keep-snapshots N > 1 every snapshot is a full copy and the last N successful
+ones are retained. Snapshot admission budgets the bytes copied (full tree or
+changed files) plus rollback space. Failed checkpoints are always preserved. A
+failure while advancing leaves the live tree untouched (the previous step had
+completed). Failure/interrupt
 reclaims extraction scratch, then verifies a staged pre-step tree before an
 atomic same-filesystem directory exchange (requires renameat2 support). If
 staging cannot fit, live state and snapshot remain intact. Recovery has no
@@ -113,10 +141,12 @@ import argparse
 import ctypes
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
 import re
+import select
 import shutil
 import signal
 import stat
@@ -124,6 +154,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import zipfile
 
@@ -199,35 +230,82 @@ def check_deadline(deadline):
         raise Blocked("step timed out")
 
 
+# Digest cache for this process: (st_dev, st_ino) -> ((size, mtime_ns, ctime_ns), hex).
+# A hit needs the open file's identity and all three stamps unchanged. ctime is set
+# by the kernel on every content write, truncate, chmod, link, rename and utime (so
+# a restored mtime still moves it) and cannot be set from user space; a different
+# file at the same path has another inode, and a recycled inode is created after
+# the entry was cached, so its ctime is newer. Entries are only stored when the
+# ctime is RACY_NS older than the clock read before hashing and fstat is unchanged
+# after reading: a write in the same coarse timestamp tick as the hash cannot then
+# share the cached ctime. A clock that goes backwards clears the cache. Not covered
+# (and not covered by a fresh hash either): a process writing the tree while it is
+# being hashed, e.g. through an open writable mapping; manifests are taken only
+# while no plan process runs.
+DIGEST_CACHE = {}
+RACY_NS = 2 * 10 ** 9
+CACHE_CLOCK = [0]
+
+
+def cached_digest(metadata):
+    """Cached digest for an lstat/fstat result whose inode stamps are unchanged."""
+    cached = DIGEST_CACHE.get((metadata.st_dev, metadata.st_ino))
+    if (cached is not None and stat.S_ISREG(metadata.st_mode) and time.time_ns() >= CACHE_CLOCK[0]
+            and cached[0] == (metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)):
+        return cached[1]
+    return None
+
+
 def sha256(path, deadline=None):
-    digest = hashlib.sha256()
+    started = time.time_ns()
+    if started < CACHE_CLOCK[0]:
+        DIGEST_CACHE.clear()
+    CACHE_CLOCK[0] = started
     with path.open("rb") as source:
+        opened = os.fstat(source.fileno())
+        identity = (opened.st_dev, opened.st_ino)
+        stamps = (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
+        cached = DIGEST_CACHE.get(identity)
+        if cached is not None and cached[0] == stamps and stat.S_ISREG(opened.st_mode):
+            return cached[1]
+        digest = hashlib.sha256()
         while True:
             check_deadline(deadline)
             chunk = source.read(1024 * 1024)
             if not chunk:
-                return digest.hexdigest()
+                break
             digest.update(chunk)
+        closed = os.fstat(source.fileno())
+    result = digest.hexdigest()
+    if (stat.S_ISREG(opened.st_mode) and stamps == (closed.st_size, closed.st_mtime_ns, closed.st_ctime_ns)
+            and opened.st_ctime_ns < started - RACY_NS):
+        DIGEST_CACHE[identity] = (stamps, result)
+    else:
+        DIGEST_CACHE.pop(identity, None)
+    return result
 
 
 def manifest(root, deadline=None):
     require(root.is_dir() and not root.is_symlink(), "tree root is not a real directory")
     entries = {}
 
-    def visit(path):
+    def visit(path, relative):
         check_deadline(deadline)
-        metadata = path.lstat()
-        relative = path.relative_to(root).as_posix()
+        metadata = os.lstat(path)
         mode = stat.S_IMODE(metadata.st_mode)
         if stat.S_ISDIR(metadata.st_mode):
             entries[relative] = ["directory", mode]
-            for child in sorted(path.iterdir()):
-                visit(child)
+            with os.scandir(path) as listing:
+                names = sorted(entry.name for entry in listing)
+            for name in names:
+                visit(os.path.join(path, name), name if relative == "." else relative + "/" + name)
         else:
             require(stat.S_ISREG(metadata.st_mode), "symlink or special file in tree")
-            entries[relative] = ["file", mode, metadata.st_size, sha256(path, deadline)]
+            digest = cached_digest(metadata)
+            entries[relative] = ["file", mode, metadata.st_size,
+                                 digest if digest is not None else sha256(Path(path), deadline)]
 
-    visit(root)
+    visit(str(root), ".")
     return entries
 
 
@@ -245,62 +323,203 @@ def copy_file(source, destination, deadline=None):
     shutil.copystat(source, destination)
 
 
-def casefold_index(directory):
-    """Map casefolded child names of an existing directory to the child paths."""
-    index = {}
-    if directory.is_dir() and not directory.is_symlink():
-        for child in directory.iterdir():
-            key = child.name.casefold()
-            require(key not in index, "destination has entries differing only in case: "
-                    + child.name)
-            index[key] = child
-    return index
-
-
-def lowercase_destination(destination):
-    """Destination token target for lowercase_names: reuse an existing entry whose
-    name casefolds equal (as named); otherwise the lowercased final component."""
-    existing = casefold_index(destination.parent).get(destination.name.casefold())
-    return existing if existing is not None else destination.parent / destination.name.lower()
-
-
-def lowercase_entry(directory, index, name, keep_file=False):
-    """Lowercased target for name in directory; an existing case variant is renamed
-    to the lowercase name so it is overwritten instead of duplicated. With keep_file
-    an existing file is returned as named (skip_existing leaves it untouched)."""
-    target = directory / name.lower()
-    existing = index.get(name.casefold())
-    if keep_file and existing is not None and existing.is_file() and not existing.is_symlink():
-        return existing
-    if existing is not None and existing.name != target.name:
-        require(not existing.is_symlink(), "symlink destination")
-        existing.rename(target)
-        index[name.casefold()] = target
-    return target
-
-
-def copy_tree(source, destination, deadline=None, lowercase=False, skip_existing=False):
+def copy_tree(source, destination, deadline=None):
+    """Exact copy for snapshots and restores (names as they are, no merging rules)."""
     require(not source.is_symlink(), "symlink source")
     if source.is_file():
-        if skip_existing and destination.is_file() and not destination.is_symlink():
-            return
         copy_file(source, destination, deadline)
         return
     require(source.is_dir(), "copy source does not exist")
     require(not destination.is_symlink(), "symlink destination")
     destination.mkdir(parents=True, exist_ok=True)
-    children = sorted(source.iterdir())
+    for child in sorted(source.iterdir()):
+        check_deadline(deadline)
+        copy_tree(child, destination / child.name, deadline)
+    shutil.copystat(source, destination)
+
+
+# Case-insensitive paths. Windows resolves every path component case-insensitively;
+# the guide's instructions ("copy to Override", "delete X", "rename X to Y") assume
+# that. Plan paths are therefore resolved with PyKotor's CaseAwarePath
+# (pykotor.tools.path, PYKOTOR_REQUIREMENT): a component that matches an existing
+# entry case-insensitively becomes that entry under its existing name; the first
+# component without a match and everything after it keep the plan's spelling. No
+# name is ever rewritten or lowercased. CaseAwarePath is used as is; case_resolve
+# only adds the guarantees manual.py needs that CaseAwarePath does not give:
+#   - ambiguity: when two entries differ only in case, CaseAwarePath silently picks
+#     the exact spelling or the closest one; manual.py blocks instead;
+#   - its directory cache is keyed by mtime_ns and can be stale within one
+#     timestamp tick, so it is cleared before each resolution and the result is
+#     checked against a fresh directory listing;
+#   - its string normalization strips quotes/whitespace and splits on backslashes, so
+#     the result must have the same components (case aside) and stay under the root;
+#   - no resolved component may be a symlink (as for the literal path_token path).
+# The comparison key is PyKotor's (str.lower() of both names); it is only ever used
+# to compare names, never to name anything.
+PYKOTOR_REQUIREMENT = "pykotor==2.3.12"
+PYKOTOR = []
+
+
+def case_aware_path():
+    """PyKotor's CaseAwarePath, imported on first use. Fails clearly without pykotor."""
+    if not PYKOTOR:
+        # pykotor's logger configures the root logger with console and ./logs file
+        # handlers unless it already has one; manual.py wants neither.
+        if not logging.getLogger().handlers:
+            logging.getLogger().addHandler(logging.NullHandler())
+        # Importing pykotor otherwise patches installed files in site-packages.
+        previous = os.environ.get("PYKOTOR_SKIP_MDL_PATCH")
+        os.environ["PYKOTOR_SKIP_MDL_PATCH"] = "1"
+        try:
+            from pykotor.tools.path import CaseAwarePath, clear_cache
+        except ImportError as error:
+            raise Blocked("pykotor is required for case-insensitive paths (CaseAwarePath); "
+                          "install it with: python -m pip install " + PYKOTOR_REQUIREMENT) from error
+        finally:
+            if previous is None:
+                os.environ.pop("PYKOTOR_SKIP_MDL_PATCH", None)
+            else:
+                os.environ["PYKOTOR_SKIP_MDL_PATCH"] = previous
+        PYKOTOR.extend((CaseAwarePath, clear_cache))
+    return PYKOTOR[0]
+
+
+def case_key(name):
+    return name.lower()
+
+
+def case_matches(directory, name):
+    """Names in an existing real directory equal to name case-insensitively (fresh listing)."""
+    if not directory.is_dir() or directory.is_symlink():
+        return []
+    with os.scandir(directory) as listing:
+        return sorted(entry.name for entry in listing if case_key(entry.name) == case_key(name))
+
+
+def case_resolve(root, path):
+    """path (under root, already checked by path_token) resolved by CaseAwarePath."""
+    aware = case_aware_path()
+    PYKOTOR[1]()
+    wanted = path.relative_to(root).parts
+    resolved = Path(str(aware(path)))
+    require(resolved.is_relative_to(root), "case-aware path escapes root: " + str(path))
+    actual = resolved.relative_to(root).parts
+    require(len(actual) == len(wanted) and all(case_key(a) == case_key(b) for a, b in zip(actual, wanted)),
+            "case-aware resolution changed the path: " + str(path))
+    current, existing = root, True
+    for name, found in zip(wanted, actual):
+        if existing:
+            matches = case_matches(current, name)
+            require(len(matches) <= 1, "ambiguous path: entries differing only in case: "
+                    + ", ".join(str(current / match) for match in matches))
+            existing = bool(matches)
+            require(found == (matches[0] if existing else name),
+                    "case-aware resolution disagrees with the directory listing: " + str(path))
+        else:
+            require(found == name, "case-aware resolution changed the path: " + str(path))
+        current /= found
+        require(not current.is_symlink(), "symlink path")
+    return current
+
+
+def case_token(value, roots, allowed):
+    """A plan path token resolved case-insensitively within its root."""
+    path = path_token(value, roots, allowed)
+    return case_resolve(roots[re.match(r"\{(\w+)\}", value)[1]], path)
+
+
+def case_index(directory):
+    """Existing children of a destination directory by case key; entries that
+    differ only in case make the directory ambiguous and block."""
     index = {}
-    if lowercase:
-        names = [child.name.lower() for child in children]
-        require(len(set(names)) == len(names), "copy source names collide when lowercased")
-        index = casefold_index(destination)
+    if directory.is_dir() and not directory.is_symlink():
+        with os.scandir(directory) as listing:
+            for entry in listing:
+                key = case_key(entry.name)
+                require(key not in index, "ambiguous path: entries differing only in case in "
+                        + str(directory) + ": " + entry.name + ", " + index.get(key, ""))
+                index[key] = entry.name
+    return index
+
+
+def overlay(source, destination, deadline=None, skip_existing=False):
+    """copy operation: merge source onto destination (already case-resolved) the way
+    Windows does. Each child goes to the existing entry whose name matches
+    case-insensitively, under that existing name, or is created with the source's own
+    name. skip_existing leaves an existing destination file untouched."""
+    require(not source.is_symlink(), "symlink source")
+    require(not destination.is_symlink(), "symlink destination")
+    if source.is_file():
+        require(not destination.is_dir(), "copy destination is a directory: " + str(destination))
+        if skip_existing and destination.is_file():
+            return
+        copy_file(source, destination, deadline)
+        return
+    require(source.is_dir(), "copy source does not exist")
+    require(not destination.exists() or destination.is_dir(),
+            "copy destination is a file: " + str(destination))
+    destination.mkdir(parents=True, exist_ok=True)
+    children = sorted(source.iterdir())
+    keys = [case_key(child.name) for child in children]
+    require(len(set(keys)) == len(keys), "copy source has entries differing only in case: " + str(source))
+    index = case_index(destination)
+    aware = case_aware_path()
+    PYKOTOR[1]()
+    # Resolve every child before writing any: each write changes the destination's
+    # mtime, which would invalidate PyKotor's directory cache for every later name.
+    targets = []
     for child in children:
         check_deadline(deadline)
-        target = (lowercase_entry(destination, index, child.name, skip_existing and child.is_file())
-                  if lowercase else destination / child.name)
-        copy_tree(child, target, deadline, lowercase, skip_existing)
+        target = destination / index.get(case_key(child.name), child.name)
+        resolved = Path(str(aware(destination / child.name)))
+        # PyKotor cannot represent some names a Linux-made archive can hold (it strips
+        # trailing whitespace and '"' and splits on "\\"). For those the fresh,
+        # ambiguity-checked listing above is the only answer; no cross-check applies.
+        if resolved.parent == destination and case_key(resolved.name) == case_key(child.name):
+            require(resolved == target,
+                    "case-aware resolution disagrees with the directory listing: " + str(target))
+        targets.append((child, target))
+    for child, target in targets:
+        check_deadline(deadline)
+        overlay(child, target, deadline, skip_existing)
     shutil.copystat(source, destination)
+
+
+def writable_directory(path):
+    mode = stat.S_IMODE(path.lstat().st_mode)
+    if mode & 0o700 != 0o700:
+        path.chmod(mode | 0o700)
+
+
+def advance_snapshot(snapshot, game, old, new):
+    """Turn a snapshot whose verified manifest is old into one of the live game tree
+    whose manifest is new, rewriting only entries that differ. Changed files are
+    unlinked and copied as new inodes; unchanged files keep their inode and cached
+    digest. The caller verifies the result against new."""
+    def same(name):
+        entry = old.get(name)
+        return entry is not None and name in new and entry[0] == new[name][0] and (
+            entry[0] == "directory" or entry == new[name])
+    for name in sorted((name for name in old if not same(name)), reverse=True):
+        path = snapshot / name
+        require(not path.is_symlink(), "symlink in snapshot")
+        writable_directory(path.parent)
+        if old[name][0] == "directory":
+            writable_directory(path)
+            path.rmdir()
+        else:
+            path.unlink()
+    for name in sorted(name for name in new if not same(name)):
+        path = snapshot / name
+        writable_directory(path.parent)
+        if new[name][0] == "directory":
+            path.mkdir()
+        else:
+            copy_file(game / name, path)
+    for name in sorted((name for name in new if new[name][0] == "directory"), reverse=True):
+        path = snapshot / name
+        if stat.S_IMODE(path.lstat().st_mode) != new[name][1]:
+            path.chmod(new[name][1])
 
 
 def remove_for_restore(path):
@@ -507,9 +726,8 @@ def validate_operation(operation, roots):
     kind = operation.get("type")
     if kind in ("extract", "copy"):
         fields(operation, ("type", "source", "destination"),
-               ("expected_files",) + (("lowercase_names", "skip_existing") if kind == "copy" else ()))
-        for flag in ("lowercase_names", "skip_existing"):
-            require(type(operation.get(flag, False)) is bool, flag + " must be boolean")
+               ("expected_files",) + (("skip_existing",) if kind == "copy" else ()))
+        require(type(operation.get("skip_existing", False)) is bool, "skip_existing must be boolean")
         path_token(operation["source"], roots, ("archives",) if kind == "extract" else ("archives", "extract"))
         path_token(operation["destination"], roots, ("extract",) if kind == "extract" else ("game",))
         expected = operation.get("expected_files", {})
@@ -522,12 +740,19 @@ def validate_operation(operation, roots):
         source = path_token(operation["source"], roots, ("game",))
         destination = path_token(operation["destination"], roots, ("game",))
         require(type(operation.get("replace", False)) is bool, "replace must be boolean")
-        require(source != destination and not destination.is_relative_to(source),
+        require(not same_or_inside(destination, source),
                 "rename destination must differ from and lie outside its source")
     elif kind == "delete":
-        fields(operation, ("type", "path"), ("missing_ok",))
-        path_token(operation["path"], roots, ("game",))
+        fields(operation, ("type", "path"), ("missing_ok", "if_any_exists"))
+        path_token(operation["path"], roots, ("game", "extract"))
         require(type(operation.get("missing_ok", False)) is bool, "missing_ok must be boolean")
+        if "if_any_exists" in operation:
+            conditions = operation["if_any_exists"]
+            require(isinstance(conditions, list) and conditions and len(set(map(str, conditions))) == len(conditions),
+                    "if_any_exists must be a nonempty list of distinct paths")
+            for token in conditions:
+                path_token(token, roots, ("game",))
+            require(operation.get("missing_ok", False) is True, "if_any_exists requires missing_ok: true")
     elif kind == "patcher":
         fields(operation, PATCHER_FIELDS, ("expected_files", "expected_changes"))
         validate_patcher_fields(operation, roots)
@@ -538,6 +763,12 @@ def validate_operation(operation, roots):
         validate_gui_fields(operation)
     else:
         raise Blocked("unsupported operation")
+
+
+def same_or_inside(path, other):
+    """path equals or lies inside other, comparing names case-insensitively."""
+    keys, other_keys = [case_key(part) for part in path.parts], [case_key(part) for part in other.parts]
+    return keys[:len(other_keys)] == other_keys
 
 
 PATCHER_FIELDS = ("type", "patcher", "sha256", "argv", "cwd",
@@ -697,8 +928,8 @@ def extract_7z(source, destination, deadline, rollback_reserve=None):
                 key, separator, value = line.partition(" = ")
                 require(separator and key not in metadata, "ambiguous 7z listing")
                 metadata[key] = value
-            name = metadata.get("Path", "")
-            require(name and "\\" not in name and ":" not in name
+            name = metadata.get("Path", "").replace("\\", "/")
+            require(name and ":" not in name
                     and not any(ord(character) < 32 for character in name)
                     and not Path(name).is_absolute()
                     and all(part not in ("", ".", "..") for part in name.split("/")),
@@ -735,6 +966,7 @@ def extract_7z(source, destination, deadline, rollback_reserve=None):
         with tempfile.TemporaryFile(dir=staging) as output:
             run(["x", "-y", "-p", "-o" + str(payload), "--", str(source.resolve())],
                 staging, output, 8 * 1024 * 1024)
+        split_backslash_names(payload, deadline)
         actual = {}
         for root, directories, files in os.walk(payload, followlinks=False):
             for name in directories + files:
@@ -757,6 +989,33 @@ def extract_7z(source, destination, deadline, rollback_reserve=None):
         require(actual == expected, "7z extracted entries differ from listing")
         require(shutil.disk_usage(staging).free >= reserve, "insufficient extraction space")
         payload.rename(destination)
+
+
+def split_backslash_names(payload, deadline=None):
+    """Move entries 7z extracted under a name containing "\\" to the nested path
+    that name denotes, as Windows extractors would create it. The pieces are
+    checked like listing paths; an existing entry at the new path blocks."""
+    pending = [payload]
+    while pending:
+        directory = pending.pop()
+        for child in sorted(directory.iterdir()):
+            check_deadline(deadline)
+            require(not child.is_symlink(), "extracted link or special file")
+            target = child
+            if "\\" in child.name:
+                parts = child.name.split("\\")
+                require(all(part not in ("", ".", "..") and ":" not in part for part in parts),
+                        "unsafe 7z archive path")
+                target = directory.joinpath(*parts)
+                require(not target.exists() and not target.is_symlink(), "duplicate 7z member")
+                for parent in reversed(target.relative_to(directory).parents[:-1]):
+                    folder = directory / parent
+                    require(not folder.is_symlink() and (folder.is_dir() or not folder.exists()),
+                            "7z member type conflict")
+                    folder.mkdir(mode=0o700, exist_ok=True)
+                child.rename(target)
+            if target.is_dir():
+                pending.append(target)
 
 
 def extract(source, destination, deadline, rollback_reserve=None):
@@ -789,7 +1048,7 @@ def extract_payload(source, destination, deadline, rollback_reserve=None):
                 "insufficient extraction space (rollback reserve protected)")
 
     def target(name):
-        require("\\" not in name and not re.match(r"^[A-Za-z]:", name), "unsafe archive path")
+        require(not re.match(r"^[A-Za-z]:", name), "unsafe archive path")
         require(not Path(name).is_absolute() and ".." not in Path(name).parts,
                 "archive traversal")
         result = destination / name
@@ -805,6 +1064,9 @@ def extract_payload(source, destination, deadline, rollback_reserve=None):
     def unpack(name, directory, incoming, mode, size):
         nonlocal expanded, declared
         check_deadline(deadline)
+        # Windows extractors treat "\\" in member names as a directory separator.
+        name = name.replace("\\", "/")
+        directory = directory or name.endswith("/")
         require(size >= 0 and (not directory or size == 0), "invalid archive member size")
         declared += size
         require(declared <= byte_limit, "archive expanded byte limit exceeded")
@@ -895,7 +1157,7 @@ def verify_patcher_result(operation, roots, before, deadline, encodings=("utf-8"
     after_effects = {name: entry for name, entry in after.items() if entry[0] == "file"}
     require(before_effects != after_effects, "patcher produced no game manifest changes")
     for token, digest in operation.get("expected_files", {}).items():
-        target = path_token(token, roots, ("game",))
+        target = case_token(token, roots, ("game",))
         require(target.is_file() and sha256(target, deadline) == digest,
                 "patcher expected file SHA256 mismatch")
     check_deadline(deadline)
@@ -909,15 +1171,79 @@ def stop_process_group(process):
     process.wait()
 
 
+PIPE_POLL = 0.25
+PIPE_DRAIN_SECONDS = 5
+
+
+class PatcherProcess:
+    """The original patcher in its own session (no shell), stdin /dev/null, stdout and
+    stderr on one pipe that a thread copies into the private step log.
+
+    Not a regular file: under Wine, a frozen Windows Python (PyInstaller HoloPatcher)
+    whose stdout/stderr is a regular file aborts before reading any argument ("Fatal
+    Python error: init_sys_streams ... [WinError 6] Invalid handle"; Wine 9.0 in CI,
+    as in Wine bug 51813), while the same program starts with pipes."""
+
+    def __init__(self, argv, cwd, log):
+        log.flush()
+        self.log = log
+        self.process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, start_new_session=True, shell=False)
+        self.stopping = threading.Event()
+        self.thread = threading.Thread(target=self.copy_output, daemon=True)
+        self.thread.start()
+
+    def copy_output(self):
+        descriptor = self.process.stdout.fileno()
+        while True:
+            try:
+                readable, _, _ = select.select([descriptor], [], [], PIPE_POLL)
+                if not readable:
+                    if self.stopping.is_set():
+                        return
+                    continue
+                data = os.read(descriptor, 65536)
+                if not data:
+                    return
+                self.log.write(data)
+                self.log.flush()
+            except (OSError, ValueError):
+                return
+
+    def poll(self):
+        return self.process.poll()
+
+    @property
+    def returncode(self):
+        return self.process.returncode
+
+    def wait(self, timeout=None):
+        return self.process.wait(timeout=timeout)
+
+    def finish(self):
+        """After the group is killed: copy what is left, bounded (a daemonized Wine
+        helper may still hold the pipe), then close it."""
+        self.stopping.set()
+        self.thread.join(PIPE_DRAIN_SECONDS)
+        if not self.thread.is_alive():
+            self.process.stdout.close()
+
+
+def stop_patcher(process):
+    try:
+        stop_process_group(process.process)
+    finally:
+        process.finish()
+
+
 def run_patcher(operation, roots, log, deadline):
     cwd, argv, before = prepare_patcher(operation, roots, deadline)
-    process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log,
-                               stderr=subprocess.STDOUT, start_new_session=True, shell=False)
+    process = PatcherProcess(argv, cwd, log)
     try:
         code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
         require(code == 0, "original patcher exit code: " + str(code))
     finally:
-        stop_process_group(process)
+        stop_patcher(process)
     verify_patcher_result(operation, roots, before, deadline)
 
 
@@ -1056,11 +1382,14 @@ def gui_diagnostics(tools, log):
 def stop_gui(process, tools, log):
     if process.poll() is not None:
         gui_note(log, "patcher exited early with code %s (not evidence)" % process.returncode)
-    stop_process_group(process)
     try:
-        gui_command([tools["wineserver"], "-k"], log, time.monotonic() + GUI_CLEANUP_SECONDS)
-    except Exception as error:
-        gui_note(log, "wineserver -k failed: " + str(error))
+        stop_process_group(process.process)
+        try:
+            gui_command([tools["wineserver"], "-k"], log, time.monotonic() + GUI_CLEANUP_SECONDS)
+        except Exception as error:
+            gui_note(log, "wineserver -k failed: " + str(error))
+    finally:
+        process.finish()
 
 
 def run_gui_patcher(operation, roots, log, deadline):
@@ -1074,9 +1403,7 @@ def run_gui_patcher(operation, roots, log, deadline):
                                   "/d", data, "/f"], log, deadline)
             require(result.returncode == 0, "wine reg add failed: " + entry["key"])
         check_deadline(deadline)
-        log.flush()
-        process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log,
-                                   stderr=subprocess.STDOUT, start_new_session=True, shell=False)
+        process = PatcherProcess(argv, cwd, log)
         try:
             for action in operation["actions"]:
                 run_gui_action(action, operation, roots, tools, log, deadline)
@@ -1093,6 +1420,13 @@ def run_gui_patcher(operation, roots, log, deadline):
         raise
 
 
+def note(log, text):
+    """One line in the private step log (log may be None outside a plan run)."""
+    if log is not None:
+        log.write(("[manual] " + text + "\n").encode("utf-8", errors="backslashreplace"))
+        log.flush()
+
+
 def execute(operation, roots, log, deadline, rollback_reserve=None):
     validate_operation(operation, roots)
     check_deadline(deadline)
@@ -1102,36 +1436,48 @@ def execute(operation, roots, log, deadline, rollback_reserve=None):
     elif kind == "gui_patcher":
         run_gui_patcher(operation, roots, log, deadline)
     elif kind == "rename":
-        source = path_token(operation["source"], roots, ("game",))
-        destination = path_token(operation["destination"], roots, ("game",))
+        source = case_token(operation["source"], roots, ("game",))
+        destination = case_token(operation["destination"], roots, ("game",))
         require(source.exists(), "rename source missing")
+        require(not same_or_inside(destination, source),
+                "rename destination must differ from and lie outside its source")
         if destination.exists():
             require(operation.get("replace", False), "rename destination exists (replace not set)")
             require(destination.is_file() and source.is_file(),
                     "rename may replace only a file with a file, never a directory")
         destination.parent.mkdir(parents=True, exist_ok=True)
         os.replace(source, destination)
+        note(log, "renamed %s to %s" % (source, destination))
     elif kind == "delete":
-        path = path_token(operation["path"], roots, ("game",))
-        if path.is_dir():
-            shutil.rmtree(path)
-        elif path.exists():
-            path.unlink()
+        conditions = operation.get("if_any_exists")
+        present = [str(path) for path in (case_token(token, roots, ("game",)) for token in conditions or ())
+                   if path.exists()]
+        if conditions is not None and not present:
+            note(log, "delete skipped: none of if_any_exists is present")
         else:
-            require(operation.get("missing_ok", False), "delete target missing")
+            if present:
+                note(log, "delete condition met: " + ", ".join(present))
+            path = case_token(operation["path"], roots, ("game", "extract"))
+            if path.is_dir():
+                shutil.rmtree(path)
+                note(log, "deleted directory " + str(path))
+            elif path.exists():
+                path.unlink()
+                note(log, "deleted " + str(path))
+            else:
+                require(operation.get("missing_ok", False), "delete target missing")
+                note(log, "delete target missing (missing_ok): " + str(path))
     else:
         source = path_token(operation["source"], roots, ("archives", "extract"))
-        destination = path_token(operation["destination"], roots, ("extract", "game"))
         if kind == "extract":
-            extract(source, destination, deadline, rollback_reserve)
-        elif operation.get("lowercase_names", False):
-            copy_tree(source, lowercase_destination(destination), deadline, lowercase=True,
-                      skip_existing=operation.get("skip_existing", False))
+            extract(source, path_token(operation["destination"], roots, ("extract",)),
+                    deadline, rollback_reserve)
         else:
-            copy_tree(source, destination, deadline,
-                      skip_existing=operation.get("skip_existing", False))
+            destination = case_token(operation["destination"], roots, ("game",))
+            overlay(source, destination, deadline, operation.get("skip_existing", False))
+            note(log, "copied %s to %s" % (source, destination))
         for token, digest in operation.get("expected_files", {}).items():
-            target = path_token(token, roots, ("game",))
+            target = case_token(token, roots, ("game",))
             require(target.is_file() and sha256(target, deadline) == digest,
                     "non-patcher expected file SHA256 mismatch")
     check_deadline(deadline)
@@ -1154,6 +1500,7 @@ def main():
     report_path = None
     try:
         require(os.name == "posix", "POSIX host required; use explicit Wine argv for Windows patchers")
+        case_aware_path()
         timeout_value(args.step_timeout)
         require(args.keep_snapshots >= 1, "keep-snapshots must be at least 1")
         require(not args.game_dir.is_symlink() and not args.archives.is_symlink()
@@ -1189,6 +1536,7 @@ def main():
         write_json(report_path, report)
         signal.signal(signal.SIGTERM, interrupted)
         successful = []
+        previous = None
         for index, step in enumerate(plan["steps"], 1):
             require(sha256(args.plan) == plan_hash and sha256(args.guide) == plan["guide_sha256"],
                     "immutable plan or guide changed")
@@ -1206,13 +1554,25 @@ def main():
             write_json(report_path, report)
             before = manifest(roots["game"])
             restore_bytes = tree_capacity(before, roots["game"].parent)
-            snapshot_bytes = tree_capacity(before, checkpoint)
+            advancing = args.keep_snapshots == 1 and previous is not None and previous[0].is_dir()
+            copied = {name: entry for name, entry in before.items()
+                      if previous[1].get(name) != entry} if advancing else before
+            snapshot_bytes = tree_capacity(copied, checkpoint)
             shared = checkpoint.stat().st_dev == roots["game"].parent.stat().st_dev
             admit_capacity(checkpoint, snapshot_bytes + (restore_bytes if shared else 0),
                            "snapshot and rollback reserve")
             if not shared:
                 admit_capacity(roots["game"].parent, restore_bytes, "rollback reserve")
-            copy_tree(roots["game"], snapshot)
+            if advancing:
+                previous[0].rename(snapshot)
+                previous[2]["snapshot_retained"] = False
+                previous[2]["snapshot_advanced_to"] = str(checkpoint)
+                receipt["snapshot_advanced_from"] = previous[2]["checkpoint"]
+                write_json(report_path, report)
+                advance_snapshot(snapshot, roots["game"], previous[1], before)
+            else:
+                copy_tree(roots["game"], snapshot)
+            previous = None
             require(manifest(snapshot) == before == manifest(roots["game"]), "snapshot verification failed")
             admit_capacity(roots["game"].parent, restore_bytes, "rollback reserve")
             write_json(checkpoint / "before.json", before)
@@ -1253,6 +1613,7 @@ def main():
                 raise
             successful.append((snapshot, receipt))
             prune_snapshots(successful, args.keep_snapshots, roots["game"], after)
+            previous = (snapshot, before, receipt)
             write_json(report_path, report)
         require([item["id"] for item in report["steps"]] == [step["id"] for step in plan["steps"]]
                 and all(item["status"] in ("complete", "omitted") for item in report["steps"]),

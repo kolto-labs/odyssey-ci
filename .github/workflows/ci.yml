@@ -59,7 +59,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Run the tools/modsync-ci unit tests
-        run: python3 -m unittest discover -s tools/modsync-ci -p 'test_*.py'
+        run: |
+          # manual.py resolves game paths with PyKotor; its tests need the same pinned version.
+          python3 -m pip install --quiet "$(python3 -c 'import sys; sys.path.insert(0, "tools/modsync-ci"); import manual; print(manual.PYKOTOR_REQUIREMENT)')"
+          python3 -m unittest discover -s tools/modsync-ci -p 'test_*.py'
 
   # Fork and dependabot pull requests get no secrets, so they skip every job (install jobs need game).
   game:
@@ -1060,10 +1063,15 @@ jobs:
           if [[ -n "$RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID" && -n "$MOD_CACHE_BUCKET" ]]; then
             remote=(--remote "MODCACHE:$MOD_CACHE_BUCKET/modsync-archives")
           fi
+          # An archive no source can provide is a warning here, not a failure: the report's
+          # unavailable_steps reach ports.py (--restore-report), which deselects those components and
+          # their dependents with a warning and installs everything else. Such a lane passes as
+          # status "partial" (report omitted_components, a final PARTIAL warning), never "installed";
+          # any other component left out fails it (status "incomplete").
           python tools/modsync-ci/cache.py restore --guide "content/$GAME/full.md" \
             --cache-dir "$RUNNER_TEMP/mod-cache" --destination "$RUNNER_TEMP/archives" \
             --archive-map "$RUNNER_TEMP/archive-map.json" --report "$RUNNER_TEMP/restore-report.json" \
-            "${policy[@]}" "${remote[@]}"
+            --deselect-unavailable "${policy[@]}" "${remote[@]}"
 
       - name: Install Wine for legacy patchers and Execute
         if: matrix.implementation == 'typescript'
@@ -1202,9 +1210,6 @@ jobs:
         run: |
           python tools/modsync-ci/game_cache.py unpack --game "$GAME" \
             --game-dir "$RUNNER_TEMP/game" --seal "$RUNNER_TEMP/sealed/baseline.seal"
-      - name: Normalize game case
-        run: |
-          python tools/modsync-ci/game_cache.py normalize-case --game "$GAME" --game-dir "$RUNNER_TEMP/game" --label manual
       - name: Game inventory
         run: |
           python tools/modsync-ci/game_cache.py inventory --game "$GAME" --game-dir "$RUNNER_TEMP/game" --label manual
@@ -1272,7 +1277,9 @@ jobs:
       - name: Install the full guide manually with the original patchers
         if: steps.plan.outputs.present == 'true'
         run: |
-          xvfb-run -a python tools/modsync-ci/manual.py --plan "$PLAN" \
+          # manual.py resolves game paths case-insensitively with PyKotor (PYKOTOR_REQUIREMENT).
+          python -m pip install --quiet "$(python -c 'import sys; sys.path.insert(0, "tools/modsync-ci"); import manual; print(manual.PYKOTOR_REQUIREMENT)')"
+          xvfb-run -a -s "-screen 0 1280x1024x24" python tools/modsync-ci/manual.py --plan "$PLAN" \
             --guide "content/$GAME/full.md" --game-dir "$RUNNER_TEMP/game" \
             --archives "$RUNNER_TEMP/archives" --work-dir "$RUNNER_TEMP/work" \
             --report "$RUNNER_TEMP/report.json"

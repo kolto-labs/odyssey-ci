@@ -179,8 +179,8 @@ named section or step may pass it. Checked against the lane code on the current
 
 Reviewed policy (step-scoped, never a whole section). **Wired for all four install
 lanes** (`rust`/`typescript` x `cli`/`gui`) in the `Restore required mod archives`
-step, which both the Rust and the TypeScript install lanes run; the `manual` lane does
-not pass them:
+step, which both the Rust and the TypeScript install lanes run. The `manual` lane's
+archive restore passes the same flags (all three links are outside the Mod List):
 
 | Link | Game | Step (`##` / `###`) | Reason |
 | --- | --- | --- | --- |
@@ -194,10 +194,17 @@ Flags `ci.yml` passes to `cache.py restore` in Rust lanes:
 - K2: `--allow-uncached-by-policy "Optional Install Assistant - Quicker TSLPatching::Quicker TSLPatching" --allow-uncached-by-policy "Enhanced Widescreen Support Mods::K2 Cutscenes Rescaled"`
 
 Restore only asserts the skip. `ports.py --restore-report` makes the lane enforce
-it: the skipped steps are exempted from the `guide_steps_without_instructions`
-coverage check, recorded in the lane report as `skipped_by_reviewed_policy`, and
-their components are passed to `validate` and `install` as `--deselect <Guid>`;
+it: the skipped steps are exempted from the no-instructions coverage check, recorded
+in the lane report as `skipped_by_reviewed_policy` (warning severity), and their
+components and dependents are passed to `validate` and `install` as `--deselect <Guid>`;
 see [ports.md](ports.md#reviewed-policy-skips) for the converter evidence.
+
+The install lanes also pass `--deselect-unavailable`: an archive no source can provide
+(and that is not a review problem in `archive_selections.json`) is a warning, its guide
+steps go to the report's `unavailable_steps`, and `ports.py` deselects those components
+and their dependents and installs the rest. Such a lane passes with status `partial`
+(see [ports.md](ports.md#deselection-and-the-lane-verdict)); any other component left out
+fails it.
 
 The K2 flag names the one step, never the `Enhanced Widescreen Support Mods`
 section: the section also holds `K2 Remastered Cutscenes` (1066) and the other
@@ -275,14 +282,14 @@ and `Execute` steps, and still require the reviewed manifest described below.
   `MODSYNC_SOURCE_TOKEN` (`url.<token URL>.insteadOf https://github.com/`) and sets
   `CARGO_NET_GIT_FETCH_WITH_CLI=true`. The token is read from the secret into an
   environment variable and masked. It is never printed, cached or uploaded.
-  `ports.py` stops a Rust lane before install when a converted component has no
-  `Instructions` (`guide_steps_without_instructions`); 69 K1 components were in
-  that state when last measured.
-  It then runs `modsync convert --review-verified-drafts` on the converted TOML
-  (clears review only for drafts replay-verified against one local archive) and stops
-  before `validate` with `unreviewed_draft_instructions_remain`, listing every GUID,
-  if a component it would install still has an unreviewed draft; see
-  [ports.md](ports.md#verified-draft-review). Only `convert.log` is sealed and
+  `ports.py` deselects, as an error, every converted component with no
+  `Instructions` and its dependents (69 K1 components were in that state when last
+  measured), installs the rest, and then fails the lane.
+  It runs `modsync convert --review-verified-drafts` on the converted TOML (clears
+  review only for drafts replay-verified against one local archive) and then accepts
+  every remaining draft with clean diagnostics (`convert --review-draft`); a draft that
+  cannot be accepted is deselected as an error with its dependents; see
+  [ports.md](ports.md#generated-draft-acceptance). Only `convert.log` is sealed and
   uploaded; the `draft_review` summary is in the sealed `report.json`.
 - **GUI lanes** do not cover the separate widescreen phase. The Rust GUI lane runs
   one base phase over a defined subset: every converted component except the
@@ -327,7 +334,8 @@ writes a step summary ("manual lane failed: no reviewed plan, nothing installed;
 attached"), `draft_plan.py --out-dir "$RUNNER_TEMP/drafts"` runs and the drafts are
 uploaded as `manual-drafts-<game>` (14 days), then `Fail without a reviewed plan` emits
 an `::error::` and fails the job. A lane that installed nothing never ends green. When the plan exists, the job restores the game and archives the same way as
-`install` and runs `manual.py`, which still fails the job if the plan fails validation
+`install`, except that it does not run `normalize-case` (the game keeps Steam's
+original spelling; `manual.py` resolves plan paths case-insensitively with PyKotor), and runs `manual.py`, which still fails the job if the plan fails validation
 or the game or archives are missing. `report.json` is uploaded as `manual-report-<game>`
 (`if: always()`, 14 days). See [manual-lane.md](manual-lane.md).
 

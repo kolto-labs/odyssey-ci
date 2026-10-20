@@ -21,16 +21,17 @@ For each game:
    fails validation, or a missing game or archive, still fails the job.
 2. Installs Wine, Xvfb and archive tools.
 3. Restores `game-<game>-v1` and runs `game_cache.py unpack`, which verifies every
-   file, then `game_cache.py normalize-case` (lowercases `Modules/` and the file names
-   in `modules/` and `override/`; the plan's installs see a case-normalized,
-   Windows-equivalent tree), then prints the game inventory. See
-   [steam.md](steam.md#case-normalization).
+   file, then prints the game inventory. Nothing is renamed or lowercased: the game
+   tree keeps Steam's original spelling (for example K2's `Modules/`), and
+   `manual.py` resolves the plan's game paths case-insensitively instead (see
+   [The plan](#the-plan)).
 4. Restores archives with `cache.py restore` using the read-only cache credentials.
    Restore is fail-closed: if any archive of the guide is not in the cache (or fails
    verification), the step exits non-zero and the lane stops before any install
    step. This job never acquires new links; only the `mods` job fills the cache.
    See [cache.md](cache.md).
-5. Runs `xvfb-run -a python tools/modsync-ci/manual.py --plan <plan> --guide
+5. Installs PyKotor at the exact version `manual.PYKOTOR_REQUIREMENT` names, then
+   runs `xvfb-run -a python tools/modsync-ci/manual.py --plan <plan> --guide
    content/<game>/full.md --game-dir ... --archives ... --work-dir ... --report ...`.
 
 Linux runners only: `manual.py` is POSIX only, and Windows patchers run under Wine.
@@ -52,25 +53,30 @@ approves operations itself. The full contract is in the docstring of
   exact success markers, failure regexes, and expected output files or a required
   manifest change.
 
-- A `copy` operation may set `lowercase_names: true` (default `false`). The game
-  tree is case-normalized (`override/` and `modules/` are lowercase), and the
-  guide's "move the files to Override" overwrites case-insensitively on Windows.
-  On Linux a differently cased copy would create a duplicate instead, so with
-  `lowercase_names` every file and directory written under the destination gets
-  its source name in lowercase. An existing entry that differs only in case is
-  overwritten and renamed to lowercase rather than duplicated. The destination's
-  own last path component is lowercased too, unless an entry with that name in a
-  different case already exists, in which case that entry is used as it is. Two
-  source entries that lowercase to the same name, or two existing entries that
-  differ only in case, stop the step.
+- Game paths are matched case-insensitively, as on Windows, where the guide's
+  "move the files to Override" or "delete X" ignores case. `copy`, `rename` and
+  `delete` targets, `if_any_exists` paths and every `expected_files` path are
+  resolved with PyKotor's `CaseAwarePath` (`pykotor.tools.path`, pinned by
+  `manual.PYKOTOR_REQUIREMENT`; `manual.py` fails at startup without it). A path
+  component that matches an existing entry case-insensitively is that entry, under
+  its existing name; the first component without a match and everything after it
+  are created as the plan spells them. Nothing is ever renamed or lowercased.
+- A `copy` operation overlays a file or directory onto its destination the way
+  Windows does: every destination component (the plan's own and each copied
+  entry's) that matches an existing entry case-insensitively is that entry, kept
+  under its existing name and overwritten; anything else is created under the name
+  as given (a copied entry keeps its source name). Two existing entries, or two
+  source entries, that differ only in case stop the step.
 - A `copy` operation may set `skip_existing: true` (default `false`) for the
   guide's "do not overwrite" instructions. A destination file that already exists
-  (matched case-insensitively when `lowercase_names` is also set) is left untouched
-  and that source file is not copied. Directories are still merged.
+  (matched case-insensitively) is left untouched and that source file is not
+  copied. Directories are still merged.
 - A `rename` operation, `{"type": "rename", "source": "{game}/...", "destination":
   "{game}/...", "replace": false}`, moves an installed file or directory inside the
   game tree, for guide instructions such as renaming `w_ionrfl_04.mdl` to
-  `w_ionrfl_004.mdl` in Override. The source must exist. The destination must not
+  `w_ionrfl_004.mdl` in Override. Both paths resolve case-insensitively; an
+  existing destination keeps its existing name, and a new one is created as the
+  plan spells it. The source must exist. The destination must not
   exist unless `replace` is `true`, and then only an existing file can be replaced
   by a file; replacing a directory is an error. Missing parent directories of the
   destination are created.
@@ -212,7 +218,33 @@ reviewed.
 ## Execution rules
 
 - Start from a clean game tree; the work directory must not exist yet.
-- Snapshot before each step. Run steps in guide order.
+- Snapshot before each step. Run steps in guide order. Every executed step has a
+  complete pre-step snapshot in its checkpoint, verified against the SHA-256
+  manifest of the live tree before the step runs. A failed step is restored from
+  it into a staging tree, which must match the pre-step manifest before it is
+  swapped in, and the live tree must match it again afterwards.
+- With the default `--keep-snapshots 1` only the first snapshot is a full copy.
+  After a step succeeds, its snapshot is moved to the next step's checkpoint and
+  only the entries whose manifest entry changed are rewritten there (changed
+  files are unlinked and copied as new files, never edited in place; the game
+  tree never shares files with a snapshot). The earlier checkpoint keeps its
+  `before.json`/`after.json`, and its report entry names the checkpoint the
+  snapshot was advanced to (`snapshot_advanced_to`). With `--keep-snapshots N`
+  (N > 1) every snapshot is a full copy and the last N successful ones are kept.
+- Manifests reuse a file's SHA-256 while its device, inode, size, mtime and
+  ctime are all unchanged. The kernel updates ctime on every write, truncate,
+  rename, link, chmod and timestamp change, and programs cannot set it, so a
+  patcher that rewrites a file in place and restores its size and mtime is still
+  re-hashed; a replaced file has a new inode. Files changed less than two
+  seconds before a hash are never cached (timestamp ticks are coarse), and the
+  cache is dropped if the clock goes backwards. Like a fresh hash, it does not
+  cover a process still writing the tree while it is hashed; manifests are taken
+  only while no plan process runs.
+- Cost per step on a 4 GB tree: a few walks that `lstat` every file, plus hashing
+  and copying of only the files the step changed. Archive inputs are re-checked
+  before every operation the same way.
+  The first snapshot, a failed step's restore and `--keep-snapshots` above 1
+  still copy and hash the whole tree.
 - If a step fails, restore its pre-step snapshot and stop. Never skip a step,
   continue past it, or install a fix at the end: loose files are last-writer-wins
   and patchers build on earlier rows in shared `.2da` and `.tlk` files.
@@ -220,6 +252,21 @@ reviewed.
 - Exit 0 means every executed step completed and verified (report status `complete`,
   or `partial` when steps were reviewed and omitted); 1 means failed or blocked.
   There is no resume.
+
+## Patcher probe
+
+`.github/workflows/manual-probe.yml` checks the patcher mechanics of the reviewed
+plans without running a whole guide. `tools/modsync-ci/probe_plan.py build` picks one
+step per distinct patcher build and configuration (TSLPatcher namespace options,
+`LookupGameFolder`, `ConfirmMessage`, `PlaintextLog`, each HoloPatcher build, the
+TSLRCM installer), copies it verbatim from `ci/<game>-manual-plan.json` and turns
+every other step into a reviewed omission. `probe_plan.py run` then runs `manual.py`
+once per selected step on a fresh copy of the vanilla game and writes a step summary
+table; the artifact `manual-probe-<game>` holds each run's report, `manual.py`
+output, operation log and failure screenshots. A probe run proves only that a
+patcher runs and verifies under Wine; it is never manual-lane evidence. It runs on
+branch pushes that touch the plans, `manual.py`, `probe_plan.py` or the workflow, and
+on dispatch with `game` and `steps` inputs.
 
 ## Comparing with the port lanes
 

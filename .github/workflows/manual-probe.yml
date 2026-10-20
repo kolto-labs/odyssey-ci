@@ -1,19 +1,25 @@
 name: Manual lane patcher probe
 
-# Fast evidence loop for the manual lane's gui_patcher/patcher operations: restores one
-# game and the mod archives exactly like the manual job in ci.yml, then runs
-# manual_probe2.py, which installs a few mods with their original patchers under
-# Wine/Xvfb into scratch copies of the game and records every screen, window, log and
-# changed file. Read-only: it restores caches but never saves one, and uploads only
-# the probe output (mod metadata, screenshots and logs; no game files).
+# Evidence for the reviewed manual-lane plans, executed by manual.py itself. probe_plan.py
+# derives one small probe plan per selected step from ci/<game>-manual-plan.json (that step
+# and any listed prerequisites kept verbatim, every other step a reviewed probe omission;
+# the ci/ plans are never written) and runs manual.py once per probe plan on a fresh copy of
+# the vanilla game, so every selected step is attempted even when an earlier one fails. The
+# default selection (probe_plan.py SELECTIONS) covers every TSLPatcher/HoloPatcher build in
+# the plans, TSLPatcher namespace options, ConfirmMessage, LookupGameFolder=1, PlaintextLog=1
+# and the K2 TSLRCM installer. Read-only: restores caches like the manual job in ci.yml but
+# never saves one; uploads reports, step logs, screenshots and patcher logs (no game files).
 # workflow_dispatch only works once this file is on the default branch; until then a push
-# to a branch that changes the probe runs it for both games.
+# to a branch that changes the probe or the plans runs it for both games.
 on:
   push:
     branches-ignore: [dev, main]
     paths:
       - .github/workflows/manual-probe.yml
-      - tools/modsync-ci/manual_probe2.py
+      - tools/modsync-ci/probe_plan.py
+      - tools/modsync-ci/manual.py
+      - ci/k1-manual-plan.json
+      - ci/k2-manual-plan.json
   workflow_dispatch:
     inputs:
       game:
@@ -21,8 +27,8 @@ on:
         type: choice
         options: [k1, k2]
         default: k1
-      only:
-        description: Comma-separated probe sections (empty = all; see manual_probe2.py --help)
+      steps:
+        description: Comma-separated plan step ids to probe instead of the default selection (PRE+STEP runs PRE first)
         type: string
         default: ''
 
@@ -38,7 +44,7 @@ jobs:
   probe:
     name: probe (${{ matrix.game }})
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 330
     strategy:
       fail-fast: false
       matrix:
@@ -88,11 +94,9 @@ jobs:
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
         run: |
           python tools/modsync-ci/game_cache.py unpack --game "$GAME" \
-            --game-dir "$RUNNER_TEMP/game" --seal "$RUNNER_TEMP/sealed/baseline.seal"
+            --game-dir "$RUNNER_TEMP/game-pristine" --seal "$RUNNER_TEMP/sealed/baseline.seal"
           rm -rf "$RUNNER_TEMP/sealed"
-      - name: Normalize game case
-        run: |
-          python tools/modsync-ci/game_cache.py normalize-case --game "$GAME" --game-dir "$RUNNER_TEMP/game" --label probe
+          du -sh "$RUNNER_TEMP/game-pristine"
       - name: Install archive tools
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq 7zip 7zip-rar megatools libarchive-tools innoextract unar poppler-utils >/dev/null && { sudo apt-get install -y -qq unrar >/dev/null 2>&1 || echo "unrar unavailable"; }
@@ -104,6 +108,9 @@ jobs:
           key: mod-archives-
           restore-keys: mod-archives-
       - name: Restore required mod archives
+        # Evidence collection: a partial restore still lets the runs whose archives arrived go ahead;
+        # a probe run with a missing archive is reported as blocked, and no run at all fails the job.
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
@@ -116,6 +123,7 @@ jobs:
           RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
           MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
         run: |
+          mkdir -p "$RUNNER_TEMP/probe-out"
           remote=()
           if [[ -n "$RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID" && -n "$MOD_CACHE_BUCKET" ]]; then
             remote=(--remote "MODCACHE:$MOD_CACHE_BUCKET/modsync-archives")
@@ -128,16 +136,27 @@ jobs:
           fi
           python tools/modsync-ci/cache.py restore --guide "content/$GAME/full.md" \
             --cache-dir "$RUNNER_TEMP/mod-cache" --destination "$RUNNER_TEMP/archives" \
-            "${policy[@]}" "${remote[@]}"
+            --archive-map "$RUNNER_TEMP/probe-out/archive-map.json" "${policy[@]}" "${remote[@]}"
           rm -rf "$RUNNER_TEMP/mod-cache"
-      - name: Probe the original patchers
+      - name: Build the probe plans
         env:
-          ONLY: ${{ inputs.only }}
+          STEPS: ${{ inputs.steps }}
         run: |
+          python tools/modsync-ci/probe_plan.py build --game "$GAME" --plan "ci/$GAME-manual-plan.json" \
+            --out-dir "$RUNNER_TEMP/probe-plans" --steps "$STEPS"
+          cp "$RUNNER_TEMP/probe-plans/runs.json" "$RUNNER_TEMP/probe-out/runs.json"
+          python tools/modsync-ci/probe_plan.py prune-archives --runs "$RUNNER_TEMP/probe-plans/runs.json" \
+            --archives "$RUNNER_TEMP/archives"
           df -h "$RUNNER_TEMP"
-          xvfb-run -a -s "-screen 0 1280x1024x24" python tools/modsync-ci/manual_probe2.py \
-            --game "$GAME" --game-dir "$RUNNER_TEMP/game" --archives "$RUNNER_TEMP/archives" \
-            --scratch "$RUNNER_TEMP/probe-scratch" --out "$RUNNER_TEMP/probe-out" --only "$ONLY"
+      - name: Run the probe plans with manual.py
+        run: |
+          # manual.py resolves game paths case-insensitively with PyKotor (PYKOTOR_REQUIREMENT).
+          python -m pip install --quiet "$(python -c 'import sys; sys.path.insert(0, "tools/modsync-ci"); import manual; print(manual.PYKOTOR_REQUIREMENT)')"
+          # The plans' Browse-for-Folder actions navigate to exactly $RUNNER_TEMP/game.
+          xvfb-run -a -s "-screen 0 1280x1024x24" python tools/modsync-ci/probe_plan.py run \
+            --runs "$RUNNER_TEMP/probe-plans/runs.json" --guide "content/$GAME/full.md" \
+            --pristine "$RUNNER_TEMP/game-pristine" --game-dir "$RUNNER_TEMP/game" \
+            --archives "$RUNNER_TEMP/archives" --scratch "$RUNNER_TEMP/probe-scratch" --out "$RUNNER_TEMP/probe-out"
       - name: Upload probe output
         if: always()
         uses: actions/upload-artifact@v4
