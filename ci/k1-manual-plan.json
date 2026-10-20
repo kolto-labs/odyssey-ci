@@ -252,6 +252,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Game Data Patcher for KotOR/TSL)",
@@ -276,89 +288,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -411,6 +343,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Thematic KOTOR Companions)",
@@ -435,89 +379,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -646,6 +510,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] Combination of Silveredge9's Ajunta Pall Unique Appearance and DarthParametric's transparency patch)",
@@ -670,89 +546,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -855,6 +651,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(KotOR1 Droid Claw Fix)",
@@ -879,89 +687,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -4526,6 +4254,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -4574,89 +4314,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -4698,6 +4358,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Game Data Patcher for KotOR/TSL)",
@@ -4722,89 +4394,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -4878,6 +4470,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -4925,89 +4529,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -5055,6 +4579,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -5105,89 +4641,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -5235,6 +4691,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -5273,89 +4741,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -6459,6 +5847,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -6506,89 +5906,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -6962,6 +6282,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -7000,89 +6332,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -9245,6 +8497,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -9283,89 +8547,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -9495,6 +8679,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Request: Kill the Czerka jerk on Kashyyyk)",
@@ -9519,89 +8715,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -9784,6 +8900,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\"Ixgil the Bith\" by Crimson Knight)",
@@ -9808,89 +8936,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -9954,6 +9002,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[KotOR \\] Swoop Bike Upgrades 1\\.0)",
@@ -9978,89 +9038,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -10140,6 +9120,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -10178,89 +9170,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -10533,6 +9445,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Trask Ulgo Without Tutorials)",
@@ -10557,89 +9481,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -10687,6 +9531,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] All Hands on Deck for the Leviathan Prison Break)",
@@ -10711,89 +9567,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -10841,6 +9617,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Leviathan: Ain't No Air in Space)",
@@ -10865,89 +9653,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -10995,6 +9703,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -11042,89 +9762,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -11172,6 +9812,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Dark Sacrifice)",
@@ -11196,89 +9848,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -11326,6 +9898,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Saber Throw Knockdown Mod)",
@@ -11350,89 +9934,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -11480,6 +9984,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(K1 Utility Armbands)",
@@ -11504,89 +10020,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -11634,6 +10070,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -11681,89 +10129,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -11815,6 +10183,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Game Data Patcher for KotOR/TSL)",
@@ -11839,89 +10219,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -12030,6 +10330,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -12068,89 +10380,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -12202,6 +10434,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(High Quality Blasters)",
@@ -12226,89 +10470,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -12386,6 +10550,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -12424,89 +10600,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -12547,6 +10643,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -12595,89 +10703,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -12718,6 +10746,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -12765,89 +10805,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -12896,6 +10856,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] TRANDOSHANS RESCALED)",
@@ -12920,89 +10892,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -13050,6 +10942,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Custom Selkath Animation)",
@@ -13074,89 +10978,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -13204,6 +11028,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Game Data Patcher for KotOR/TSL)",
@@ -13228,89 +11064,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -13358,6 +11114,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Game Data Patcher for KotOR/TSL)",
@@ -13382,89 +11150,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -13549,6 +11237,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Thematic The One)",
@@ -13573,89 +11273,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -13703,6 +11323,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Sherruk Attacks With Lightsabers)",
@@ -13727,89 +11359,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -13867,6 +11419,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Game Data Patcher for KotOR/TSL)",
@@ -13891,89 +11455,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -14021,6 +11505,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Helena Shan Improvement)",
@@ -14045,89 +11541,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -14175,6 +11591,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -14213,89 +11641,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -14343,6 +11691,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] Taris Dueling Arena Adjustment)",
@@ -14367,89 +11727,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -14508,6 +11788,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] Control Panel For Kashyyyk Shadowlands Forcefield)",
@@ -14532,89 +11824,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -14699,6 +11911,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] Black Vulkar Base Engine Lab Bench for Swoop Accelerator)",
@@ -14723,89 +11947,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -14853,6 +11997,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -14900,89 +12056,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -15030,6 +12106,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(JC's Czerka: Business Attire for K1)",
@@ -15054,89 +12142,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -15194,6 +12202,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -15232,89 +12252,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -15362,6 +12302,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] Diversified Wounded Republic Soldiers On Taris)",
@@ -15386,89 +12338,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -15516,6 +12388,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -15554,89 +12438,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -15684,6 +12488,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Juhani Romace Enhancement Installer)",
@@ -15708,89 +12524,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -15838,6 +12574,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -15885,89 +12633,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -16015,6 +12683,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] Movie-Style Holograms for End Game Cutscenes)",
@@ -16039,89 +12719,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -16169,6 +12769,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] Movie-Style Holograms For Rancor Trio Puzzle)",
@@ -16193,89 +12805,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -16323,6 +12855,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] Movie-Style Rakatan Holograms)",
@@ -16347,89 +12891,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -16477,6 +12941,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] DS Ending Cutscene Enhancement)",
@@ -16501,89 +12977,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -16631,6 +13027,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -16669,89 +13077,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -16799,6 +13127,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -16837,89 +13177,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -16967,6 +13227,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -17015,89 +13287,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -17145,6 +13337,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -17183,89 +13387,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -17350,6 +13474,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -17397,89 +13533,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -17527,6 +13583,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Gaffi Stick Improvement - KotOR 1)",
@@ -17551,89 +13619,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -17697,6 +13685,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Dantooine Training Lightsabers)",
@@ -17721,89 +13721,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -17851,6 +13771,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\\[K1\\] Logical Datapads Mod)",
@@ -17875,89 +13807,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -18005,6 +13857,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Game Data Patcher for KotOR/TSL)",
@@ -18029,89 +13893,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -18159,6 +13943,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(\"Minor music tweaks\" by Crimson Knight)",
@@ -18183,89 +13979,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -18313,6 +14029,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(NPC Alignment Fix)",
@@ -18337,89 +14065,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -18467,6 +14115,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^(Game Data Patcher for KotOR/TSL)",
@@ -18491,89 +14151,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -18621,6 +14201,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -18668,89 +14260,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -18798,6 +14310,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -18836,89 +14360,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -21461,6 +16905,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -21510,89 +16966,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {
@@ -21633,6 +17009,18 @@
       "Done\\. Some changes may have been applied"
      ],
      "expected_changes": "changed_manifest",
+     "wine_registry": [
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      },
+      {
+       "key": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+       "name": "Desktop",
+       "data": "{game_win}"
+      }
+     ],
      "actions": [
       {
        "wait_window": "^TSLPatcher - Select installation type$",
@@ -21684,89 +17072,9 @@
       },
       {
        "click": [
-        67,
-        85
+        62,
+        69
        ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "home",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "runner",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "work",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "_temp",
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 1
-      },
-      {
-       "key": [
-        "Right"
-       ],
-       "window": "^Browse for Folder$"
-      },
-      {
-       "sleep": 2
-      },
-      {
-       "type": "game",
        "window": "^Browse for Folder$"
       },
       {

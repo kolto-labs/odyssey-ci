@@ -129,7 +129,20 @@ from a probe run of that patcher.)
   a Wine path (`Z:` followed by the absolute path with `\` separators).
   `wine_registry` entries run `wine reg add` before launch, for patchers that read
   the install path from the registry; keys must start with
-  `HKEY_LOCAL_MACHINE\` or `HKEY_CURRENT_USER\`.
+  `HKEY_LOCAL_MACHINE\` or `HKEY_CURRENT_USER\`. Each value is read first with
+  `wine reg query` and put back (or deleted, if it did not exist) after the
+  patcher stopped, on success and on failure, so no setting leaks into later
+  steps. Only `REG_SZ`, `REG_EXPAND_SZ` and `REG_DWORD` values can be read back;
+  any other existing value blocks the step before anything is written. A failed
+  restore fails a run that otherwise succeeded.
+- Generated TSLPatcher operations (`expand_patchers.py`) do not walk the folder
+  tree of TSLPatcher's "Browse for Folder" dialog. They set the Wine user's
+  Desktop folder (`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders`,
+  value `Desktop`) to `{game_win}`, click the dialog's root item "Desktop" and
+  then OK. Wine's dialog returns the Desktop item as the Desktop folder's path,
+  which is now the game folder, so TSLPatcher gets the game folder without any
+  navigation and without changing the mod's `changes.ini`. The value is restored
+  after the step.
 - TSLPatcher stays open after installing, so after the last action `manual.py`
   kills the process and runs `wineserver -k`. Its exit code is not evidence; only
   the log, markers and manifest are.

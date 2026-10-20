@@ -79,7 +79,11 @@ start with "-". The newest match is the last window xdotool lists. TEXT and
 wine_registry data expand {game_win} to the Wine path of the game root ("Z:" plus
 the absolute POSIX path with "/" as "\\"). wine_registry entries run
 `wine reg add KEY /v NAME /d DATA /f` before launch; KEY starts with
-HKEY_LOCAL_MACHINE\\ or HKEY_CURRENT_USER\\. TSLPatcher stays open after
+HKEY_LOCAL_MACHINE\\ or HKEY_CURRENT_USER\\. Each value is read first
+(`wine reg query`; only REG_SZ, REG_EXPAND_SZ and REG_DWORD can be read back,
+anything else blocks before a write) and put back, or deleted if it did not exist,
+after the patcher stopped, also on failure; a failed restore fails a run that
+otherwise succeeded. TSLPatcher stays open after
 installing, so after the last action the process group is killed and
 `wineserver -k` runs; the exit code is NOT evidence. The success log must be
 UTF-8; for gui_patcher only, a log that is not valid UTF-8 is decoded as cp1252
@@ -1446,28 +1450,83 @@ def stop_gui(process, tools, log):
         process.finish()
 
 
+RESTORABLE_REGISTRY_TYPES = ("REG_SZ", "REG_EXPAND_SZ", "REG_DWORD")
+
+
+def registry_value(tools, entry, log, deadline):
+    """(type, data) of the value a wine_registry entry is about to overwrite, or None
+    if it does not exist. Parses `wine reg query KEY /v NAME` ("    NAME    TYPE    DATA").
+    A value that cannot be read back exactly blocks the operation before anything is
+    written, because it could not be restored."""
+    result = gui_command([tools["wine"], "reg", "query", entry["key"], "/v", entry["name"]], log, deadline)
+    if result.returncode != 0:
+        return None
+    try:
+        text = result.stdout.decode("ascii")
+    except UnicodeDecodeError as error:
+        raise Blocked("registry value is not ASCII, cannot restore it: " + entry["name"]) from error
+    pattern = re.compile(r"    " + re.escape(entry["name"]) + r"    (REG_[A-Z_]+)    (.*)", re.IGNORECASE)
+    matches = [match for line in text.replace("\r", "").split("\n") if (match := pattern.fullmatch(line))]
+    require(len(matches) == 1 and matches[0].group(1) in RESTORABLE_REGISTRY_TYPES,
+            "cannot read registry value back for restoring: %s\\%s" % (entry["key"], entry["name"]))
+    return matches[0].group(1), matches[0].group(2)
+
+
+def restore_registry(saved, tools, log, strict):
+    """Put every wine_registry value back as it was before the run, newest first;
+    a value that did not exist is deleted again. Runs after the patcher stopped,
+    bounded by its own cleanup timeout so an expired step deadline cannot skip it.
+    strict=False (an error is already propagating) only logs failures."""
+    failed = []
+    for entry, previous in reversed(saved):
+        if previous is None:
+            argv = [tools["wine"], "reg", "delete", entry["key"], "/v", entry["name"], "/f"]
+        else:
+            argv = [tools["wine"], "reg", "add", entry["key"], "/v", entry["name"],
+                    "/t", previous[0], "/d", previous[1], "/f"]
+        try:
+            ok = gui_command(argv, log, time.monotonic() + GUI_CLEANUP_SECONDS).returncode == 0
+        except Exception as error:
+            gui_note(log, "registry restore error: " + str(error))
+            ok = False
+        if not ok:
+            failed.append("%s\\%s" % (entry["key"], entry["name"]))
+    if failed:
+        gui_note(log, "registry restore failed: " + ", ".join(failed))
+        require(not strict, "wine registry restore failed: " + ", ".join(failed))
+    elif saved:
+        gui_note(log, "registry restored")
+
+
 def run_gui_patcher(operation, roots, log, deadline):
     tools = gui_tools()
     diagnosed = False
     try:
         cwd, argv, before = prepare_patcher(operation, roots, deadline)
-        for entry in operation.get("wine_registry", []):
-            data = entry["data"].replace("{game_win}", game_win(roots))
-            result = gui_command([tools["wine"], "reg", "add", entry["key"], "/v", entry["name"],
-                                  "/d", data, "/f"], log, deadline)
-            require(result.returncode == 0, "wine reg add failed: " + entry["key"])
-        check_deadline(deadline)
-        process = PatcherProcess(argv, cwd, log)
+        saved = []
         try:
-            for action in operation["actions"]:
-                run_gui_action(action, operation, roots, tools, log, deadline)
+            for entry in operation.get("wine_registry", []):
+                saved.append((entry, registry_value(tools, entry, log, deadline)))
+                data = entry["data"].replace("{game_win}", game_win(roots))
+                result = gui_command([tools["wine"], "reg", "add", entry["key"], "/v", entry["name"],
+                                      "/d", data, "/f"], log, deadline)
+                require(result.returncode == 0, "wine reg add failed: " + entry["key"])
+            check_deadline(deadline)
+            process = PatcherProcess(argv, cwd, log)
+            try:
+                for action in operation["actions"]:
+                    run_gui_action(action, operation, roots, tools, log, deadline)
+            except BaseException:
+                gui_diagnostics(tools, log)
+                diagnosed = True
+                raise
+            finally:
+                stop_gui(process, tools, log)
+            verify_patcher_result(operation, roots, before, deadline, GUI_LOG_ENCODINGS)
         except BaseException:
-            gui_diagnostics(tools, log)
-            diagnosed = True
+            restore_registry(saved, tools, log, strict=False)
             raise
-        finally:
-            stop_gui(process, tools, log)
-        verify_patcher_result(operation, roots, before, deadline, GUI_LOG_ENCODINGS)
+        restore_registry(saved, tools, log, strict=True)
     except BaseException:
         if not diagnosed:
             gui_diagnostics(tools, log)

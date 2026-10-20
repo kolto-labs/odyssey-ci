@@ -31,11 +31,22 @@ esac
 exit 0
 """
 
-# Stands in for "wine reg add" and for wine running the original patcher. As the
-# patcher it shows a window, waits for the replayed keystroke, writes the log
+# Stands in for "wine reg query/add/delete" (one file per value name under
+# FAKE_STATE, holding "TYPE    DATA") and for wine running the original patcher. As
+# the patcher it shows a window, waits for the replayed keystroke, writes the log
 # (and, depending on FAKE_MODE, changes a game file) and then stays open.
 FAKE_WINE = """#!/bin/sh
-""" + RECORD + """if [ "$1" = reg ]; then exit 0; fi
+""" + RECORD + """if [ "$1" = reg ]; then
+  value="$FAKE_STATE/reg-$5"
+  case "$2" in
+    query) [ -f "$value" ] || exit 1
+           printf '%s\\r\\n    %s    %s\\r\\n\\r\\n' "$3" "$5" "$(cat "$value")"; exit 0 ;;
+    add) if [ "$6" = /t ]; then printf '%s    %s' "$7" "$9" > "$value"
+         else printf 'REG_SZ    %s' "$7" > "$value"; fi; exit 0 ;;
+    delete) [ -z "$FAKE_REG_DELETE_FAILS" ] || exit 1; rm -f "$value"; exit 0 ;;
+  esac
+  exit 2
+fi
 if [ "$FAKE_MODE" = nowindow ]; then exec sleep 600; fi
 echo 4194305 > "$FAKE_STATE/windows"
 while [ ! -e "$FAKE_STATE/go" ]; do sleep 0.05; done
@@ -234,17 +245,50 @@ class GuiExecution(Fixture):
         self.run_gui("success")
         windows = "Z:" + str(self.game).replace("/", "\\")
         calls = [call for call in self.calls() if call[:2] != ["xdotool", "search"]]
-        self.assertEqual(calls[0], ["wine", "reg", "add", "HKEY_LOCAL_MACHINE\\Software\\BioWare\\SW\\KOTOR",
-                                    "/v", "Path", "/d", windows, "/f"])
-        self.assertEqual(calls[1], ["wine", str(self.mod / "TSLPatcher.exe")])
-        self.assertEqual(calls[2:], [
+        key = "HKEY_LOCAL_MACHINE\\Software\\BioWare\\SW\\KOTOR"
+        self.assertEqual(calls[0], ["wine", "reg", "query", key, "/v", "Path"])
+        self.assertEqual(calls[1], ["wine", "reg", "add", key, "/v", "Path", "/d", windows, "/f"])
+        self.assertEqual(calls[2], ["wine", str(self.mod / "TSLPatcher.exe")])
+        self.assertEqual(calls[3:], [
             ["xdotool", "windowfocus", "4194305"],
             ["xdotool", "type", "--delay", "30", "--", windows + "\\"],
             ["xdotool", "windowfocus", "4194305"],
             ["xdotool", "key", "--window", "4194305", "--delay", "100", "alt+i", "Return"],
-            ["wineserver", "-k"]])
+            ["wineserver", "-k"],
+            ["wine", "reg", "delete", key, "/v", "Path", "/f"]])
+        self.assertFalse((self.state / "reg-Path").exists())
         self.assertEqual((self.game / "override" / "new.2da").read_text(encoding="utf-8"), "patched\n")
         self.assertFalse(list(self.work.glob("gui-failure-*.png")))
+
+    def test_existing_registry_value_is_put_back(self):
+        (self.state / "reg-Path").write_text("REG_EXPAND_SZ    %USERPROFILE%\\Desktop", encoding="utf-8")
+        self.run_gui("success")
+        self.assertEqual(self.calls()[-1], ["wine", "reg", "add", "HKEY_LOCAL_MACHINE\\Software\\BioWare\\SW\\KOTOR",
+                                            "/v", "Path", "/t", "REG_EXPAND_SZ", "/d", "%USERPROFILE%\\Desktop", "/f"])
+        self.assertEqual((self.state / "reg-Path").read_text(encoding="utf-8"),
+                         "REG_EXPAND_SZ    %USERPROFILE%\\Desktop")
+        self.assertIn(b"registry restored", self.log_path.read_bytes())
+
+    def test_registry_is_restored_after_failure(self):
+        (self.state / "reg-Path").write_text("REG_SZ    C:\\old", encoding="utf-8")
+        self.assertFails("failure", "installer failure marker matched")
+        self.assertEqual((self.state / "reg-Path").read_text(encoding="utf-8"), "REG_SZ    C:\\old")
+
+    def test_registry_value_that_cannot_be_read_back_blocks_before_writing(self):
+        (self.state / "reg-Path").write_text("REG_BINARY    00ff", encoding="utf-8")
+        self.assertFails("success", "cannot read registry value back")
+        self.assertFalse(any(call[:3] == ["wine", "reg", "add"] or call[:2] == ["wine", str(self.mod / "TSLPatcher.exe")]
+                             for call in self.calls()))
+        self.assertEqual((self.state / "reg-Path").read_text(encoding="utf-8"), "REG_BINARY    00ff")
+
+    def test_failed_restore_fails_a_successful_run(self):
+        with mock.patch.dict(os.environ, {"FAKE_REG_DELETE_FAILS": "1"}):
+            self.assertFails("success", "wine registry restore failed")
+
+    def test_failed_restore_does_not_mask_the_original_error(self):
+        with mock.patch.dict(os.environ, {"FAKE_REG_DELETE_FAILS": "1"}):
+            self.assertFails("failure", "installer failure marker matched")
+        self.assertIn(b"registry restore failed", self.log_path.read_bytes())
 
     def test_failure_regex_match_fails(self):
         self.assertFails("failure", "installer failure marker matched")
