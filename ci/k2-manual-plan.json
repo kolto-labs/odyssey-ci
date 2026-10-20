@@ -373,7 +373,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     },
@@ -543,7 +543,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     },
@@ -714,7 +714,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     },
@@ -888,7 +888,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     },
@@ -1063,7 +1063,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     },
@@ -1239,7 +1239,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -1424,7 +1424,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -1594,7 +1594,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -1869,7 +1869,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -2054,7 +2054,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -11945,7 +11945,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -12099,7 +12099,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -12973,7 +12973,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -13926,7 +13926,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -14493,7 +14493,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     },
@@ -14725,7 +14725,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     },
@@ -15208,7 +15208,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -15502,7 +15502,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -15656,7 +15656,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -15810,7 +15810,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     },
@@ -15953,7 +15953,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -16256,7 +16256,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -16410,7 +16410,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -16564,7 +16564,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -16718,7 +16718,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -16886,7 +16886,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -17196,7 +17196,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -17373,7 +17373,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -17527,7 +17527,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -17921,7 +17921,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -18079,7 +18079,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -24320,7 +24320,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -24498,7 +24498,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -24675,7 +24675,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     },
@@ -24846,7 +24846,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -25072,7 +25072,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     },
@@ -25236,7 +25236,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -25919,7 +25919,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -26087,7 +26087,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -26532,7 +26532,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -26707,7 +26707,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -26982,7 +26982,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -27558,7 +27558,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }
@@ -28942,7 +28942,7 @@
        "window": "^Browse for Folder$"
       },
       {
-       "wait_log": 1500
+       "wait_log": 600
       }
      ]
     }

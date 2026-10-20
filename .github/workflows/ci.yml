@@ -1301,3 +1301,30 @@ jobs:
           path: ${{ runner.temp }}/report.json
           retention-days: 14
           if-no-files-found: ignore
+      - name: Collect manual lane step diagnostics
+        if: always() && steps.plan.outputs.present == 'true'
+        run: |
+          # manual.py keeps per step work/step-NNNN/: operations.log (operations, patcher output,
+          # [gui_patcher] window names), gui-failure-N.png screenshots and installer-log-N.* (the
+          # failed patcher's own log), next to before/ (game snapshot) and before.json/after.json
+          # (full game manifests). Only the top-level small files are copied, never the snapshot,
+          # the manifests or work/extract. manual.py runs as this user, so its 0700/0600 files are readable.
+          out="$RUNNER_TEMP/manual-diagnostics"
+          mkdir -p "$out"
+          [ -d "$RUNNER_TEMP/work" ] || exit 0
+          for step in "$RUNNER_TEMP"/work/step-*/; do
+            [ -d "$step" ] || continue
+            name=$(basename "$step")
+            find "$step" -mindepth 1 -maxdepth 1 -type f -size -16M \
+              ! -name before.json ! -name after.json \
+              -exec install -D -m 0644 -t "$out/$name" {} +
+          done
+          du -sh "$out" || true
+      - name: Upload manual lane step diagnostics
+        if: always() && steps.plan.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-diagnostics-${{ matrix.game }}
+          path: ${{ runner.temp }}/manual-diagnostics
+          retention-days: 14
+          if-no-files-found: ignore

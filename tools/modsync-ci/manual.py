@@ -85,9 +85,12 @@ installing, so after the last action the process group is killed and
 UTF-8; for gui_patcher only, a log that is not valid UTF-8 is decoded as cp1252
 (TSLPatcher writes plain ANSI RTF; markers match the raw RTF text). Undecodable
 bytes are never replaced. xdotool, wine and wineserver must be on PATH and
-DISPLAY set. On failure a best-effort root window screenshot (ImageMagick
-`import`, if present) is stored next to the private step log and visible window
-names are logged; neither masks the original error.
+DISPLAY set. While wait_log polls, the visible window names are logged every 30
+seconds. On failure a best-effort root window screenshot (ImageMagick `import`, if
+present) is stored next to the private step log and visible window names are
+logged; neither masks the original error. When a patcher or gui_patcher fails, its
+success log (if present; first 1 MiB) is copied next to the private step log as
+installer-log-N.<ext> before rollback wipes {extract} and restores the game.
 Paths start with {archives}/, {extract}/ or {game}/. Extract writes only under
 {extract}; copy reads archives/extract and writes game; rename writes game; delete
 writes game or extract.
@@ -1280,6 +1283,8 @@ def run_patcher(operation, roots, log, deadline):
 
 GUI_POLL = 0.25
 GUI_CLEANUP_SECONDS = 30
+GUI_WINDOW_REPORT_SECONDS = 30
+INSTALLER_LOG_COPY_LIMIT = 1 << 20
 GUI_LOG_ENCODINGS = ("utf-8", "cp1252")
 
 
@@ -1336,13 +1341,33 @@ def focus_window(tools, pattern, log, deadline):
     return window
 
 
-def wait_for_log(operation, roots, seconds, log, deadline):
+def log_window_names(tools, log, deadline, limit=10):
+    """List every visible window name in the step log (evidence only)."""
+    for window in visible_windows(tools, ".", log, deadline):
+        name = gui_command([tools["xdotool"], "getwindowname", window], log, deadline, limit)
+        gui_note(log, "visible window %s: %s" % (window, name.stdout.decode("utf-8", "backslashreplace").strip()))
+
+
+def wait_for_log(operation, roots, seconds, log, deadline, tools=None):
     """Wait until the success log settles on a verdict; the verdict itself is
-    checked afterwards by verify_patcher_result."""
+    checked afterwards by verify_patcher_result. Every GUI_WINDOW_REPORT_SECONDS
+    the visible window names go to the step log, so a stuck or error dialog is
+    named even when the wait runs out."""
     success_log = path_token(operation["success_log"], roots, ("game", "extract"))
-    limit = time.monotonic() + seconds
+    started = time.monotonic()
+    limit = started + seconds
+    report = started + GUI_WINDOW_REPORT_SECONDS
     while True:
         check_deadline(deadline)
+        if tools is not None and time.monotonic() >= report:
+            report = time.monotonic() + GUI_WINDOW_REPORT_SECONDS
+            gui_note(log, "waiting for success log, %.0f s elapsed; log %s" % (
+                time.monotonic() - started, "present" if success_log.is_file() else "absent"))
+            try:
+                log_window_names(tools, log, deadline)
+            except Exception as error:
+                check_deadline(deadline)
+                gui_note(log, "window listing failed: " + str(error))
         if success_log.is_file():
             try:
                 text = decode_installer_log(success_log.read_bytes(), GUI_LOG_ENCODINGS)
@@ -1368,7 +1393,7 @@ def run_gui_action(action, operation, roots, tools, log, deadline):
         time.sleep(remaining(deadline, action["sleep"]))
         check_deadline(deadline)
     elif kind == "wait_log":
-        wait_for_log(operation, roots, action["wait_log"], log, deadline)
+        wait_for_log(operation, roots, action["wait_log"], log, deadline, tools)
     elif kind == "key":
         window = focus_window(tools, action["window"], log, deadline)
         result = gui_command([tools["xdotool"], "key", "--window", window, "--delay", "100"]
@@ -1400,9 +1425,7 @@ def gui_diagnostics(tools, log):
             gui_command([importer, "-window", "root", str(directory / ("gui-failure-%d.png" % index))],
                         log, unbounded, GUI_CLEANUP_SECONDS)
         if tools.get("xdotool"):
-            for window in visible_windows(tools, ".", log, unbounded):
-                name = gui_command([tools["xdotool"], "getwindowname", window], log, unbounded, 10)
-                gui_note(log, "visible window %s: %s" % (window, name.stdout.decode("utf-8", "backslashreplace").strip()))
+            log_window_names(tools, log, unbounded)
     except Exception as error:
         try:
             gui_note(log, "diagnostics incomplete: " + str(error))
@@ -1458,14 +1481,45 @@ def note(log, text):
         log.flush()
 
 
+def preserve_installer_log(operation, roots, log):
+    """Best effort: copy a failed patcher's own success log (at most
+    INSTALLER_LOG_COPY_LIMIT bytes) next to the private step log before rollback
+    wipes the extract tree and restores the game. Never raises."""
+    try:
+        directory = Path(log.name).parent if isinstance(getattr(log, "name", None), str) else None
+        if directory is None:
+            return
+        source = path_token(operation["success_log"], roots, ("game", "extract"))
+        if source.is_symlink() or not source.is_file():
+            note(log, "installer log not present after failure: " + str(source))
+            return
+        index = 1
+        while any(directory.glob("installer-log-%d.*" % index)):
+            index += 1
+        target = directory / ("installer-log-%d%s" % (index, source.suffix or ".log"))
+        size = source.stat().st_size
+        with source.open("rb") as incoming, target.open("xb") as outgoing:
+            outgoing.write(incoming.read(INSTALLER_LOG_COPY_LIMIT))
+        note(log, "installer log %s (%d bytes%s) preserved as %s" % (
+            source, size, ", truncated to %d" % INSTALLER_LOG_COPY_LIMIT if size > INSTALLER_LOG_COPY_LIMIT
+            else "", target.name))
+    except Exception as error:
+        try:
+            note(log, "installer log not preserved: " + str(error))
+        except Exception:
+            pass
+
+
 def execute(operation, roots, log, deadline, rollback_reserve=None):
     validate_operation(operation, roots)
     check_deadline(deadline)
     kind = operation["type"]
-    if kind == "patcher":
-        run_patcher(operation, roots, log, deadline)
-    elif kind == "gui_patcher":
-        run_gui_patcher(operation, roots, log, deadline)
+    if kind in ("patcher", "gui_patcher"):
+        try:
+            (run_patcher if kind == "patcher" else run_gui_patcher)(operation, roots, log, deadline)
+        except BaseException:
+            preserve_installer_log(operation, roots, log)
+            raise
     elif kind == "rename":
         source = case_token(operation["source"], roots, ("game",))
         destination = case_token(operation["destination"], roots, ("game",))

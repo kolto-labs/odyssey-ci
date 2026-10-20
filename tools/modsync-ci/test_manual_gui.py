@@ -251,6 +251,38 @@ class GuiExecution(Fixture):
         self.assertIn(["wineserver", "-k"], self.calls())
         self.assertTrue((self.work / "gui-failure-1.png").exists())
 
+    def test_failure_preserves_installer_log_before_rollback(self):
+        self.assertFails("failure", "installer failure marker matched")
+        copy = self.work / "installer-log-1.rtf"
+        self.assertEqual(copy.read_bytes(), (self.mod / "installlog.rtf").read_bytes())
+        self.assertIn(b"preserved as installer-log-1.rtf", self.log_path.read_bytes())
+
+    def test_preserved_installer_log_is_size_capped(self):
+        with mock.patch.object(manual, "INSTALLER_LOG_COPY_LIMIT", 8):
+            self.assertFails("failure", "installer failure marker matched")
+        self.assertEqual((self.work / "installer-log-1.rtf").read_bytes(),
+                         (self.mod / "installlog.rtf").read_bytes()[:8])
+        self.assertIn(b"truncated to 8", self.log_path.read_bytes())
+
+    def test_missing_installer_log_is_noted(self):
+        operation = gui_operation(self.wine)
+        operation["actions"][0]["timeout"] = 0.5
+        self.assertFails("nowindow", "window did not appear", operation=operation)
+        self.assertFalse(list(self.work.glob("installer-log-*")))
+        self.assertIn(b"installer log not present after failure", self.log_path.read_bytes())
+
+    def test_wait_log_reports_windows_and_screenshots_before_giving_up(self):
+        operation = gui_operation(self.wine)
+        operation["actions"][-1]["wait_log"] = 1
+        with mock.patch.object(manual, "GUI_WINDOW_REPORT_SECONDS", 0.2):
+            self.assertFails("nolog", "did not settle within 1 seconds", operation=operation)
+        text = self.log_path.read_bytes()
+        self.assertGreaterEqual(text.count(b"waiting for success log"), 2)
+        self.assertIn(b"log absent", text)
+        self.assertIn(b"visible window 4194305: Fake Installer", text)
+        self.assertTrue((self.work / "gui-failure-1.png").exists())
+        self.assertIn(["wineserver", "-k"], self.calls())
+
     def test_unchanged_manifest_fails(self):
         self.assertFails("nochange", "patcher produced no game manifest changes")
 

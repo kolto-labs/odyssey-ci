@@ -136,9 +136,19 @@ from a probe run of that patcher.)
 - TSLPatcher writes `installlog.rtf` as plain ANSI RTF. Markers match the raw RTF
   text. The log is decoded as UTF-8 and, only for `gui_patcher`, as cp1252 if that
   fails. Bytes are never replaced or dropped.
-- On failure the step log lists the visible window names, and if ImageMagick's
-  `import` is available a screenshot of the root window is stored next to it in the
-  private checkpoint directory.
+- While `wait_log` polls, the step log lists the visible window names every 30
+  seconds, so a stuck or error dialog is named. On failure the step log lists the
+  visible window names, and if ImageMagick's `import` is available a screenshot of
+  the root window is stored next to it in the private checkpoint directory.
+- When a `patcher` or `gui_patcher` fails, its own success log (if it exists; at
+  most the first 1 MiB) is copied next to the step log as `installer-log-N.<ext>`
+  before rollback wipes `{extract}` and restores the game.
+- In CI the manual job uploads `manual-diagnostics-<game>` (always, when a plan is
+  present): per checkpoint `step-NNNN/` the small top-level files, i.e.
+  `operations.log`, `gui-failure-N.png` and `installer-log-N.*`, never the game
+  snapshot `before/` or the `before.json`/`after.json` manifests.
+- Generated TSLPatcher plans (`expand_patchers.py`) wait 600 seconds in
+  `wait_log`; one mod installs in well under two minutes.
 - `xdotool`, `wine` and `wineserver` must be on `PATH` and `DISPLAY` must be set,
   otherwise the step fails with a clear error.
 
