@@ -23,7 +23,22 @@ human review rationale; step_ids explicitly associates any applicable mod steps
 
 Operations (unknown fields are errors):
   {type: extract, source: PATH, destination: PATH} -- ZIP/tar/RAR/7z, fresh destination
-  {type: copy, source: PATH, destination: PATH} -- file or directory overlay
+  {type: copy, source: PATH, destination: PATH, lowercase_names: BOOL?} -- file or
+   directory overlay. lowercase_names (default false) writes every created or
+   overwritten entry under its lowercased source name, matching the case-normalized
+   game tree and Windows' case-insensitive overwrite: an existing entry whose name
+   casefolds equal but differs in case is overwritten and renamed to lowercase, never
+   duplicated. The destination token's final component is lowercased unless an entry
+   whose casefold matches already exists, which is then reused as named. Two source
+   entries that lowercase alike, or two existing entries that casefold alike, block.
+   skip_existing (default false) leaves every destination FILE that already exists
+   (matched case-insensitively with lowercase_names) untouched and does not copy
+   that source file; directories are still merged.
+  {type: rename, source: GAME_PATH, destination: GAME_PATH, replace: BOOL?} -- move
+   an existing file or directory within game. The destination must not exist
+   unless replace is true, which replaces an existing file only (a directory on
+   either side of a replacement is an error). Missing destination parents are
+   created.
   {type: delete, path: PATH, missing_ok: BOOL?}
   {type: patcher, patcher: PATH, sha256: HEX, argv: [ARG,...], cwd: PATH,
    success_log: PATH, success_markers: [EXACT_STRING,...],
@@ -34,8 +49,39 @@ Every patcher must change the game manifest. success_log must be a fresh file
 under game/extract; all literal success markers must occur and no reviewed
 failure regex may match (Python regex, MULTILINE, case sensitivity explicit).
 There are no inferred success/error markers or exceptions for "0 errors".
+  {type: gui_patcher, patcher, sha256, argv, cwd, success_log, success_markers,
+   failure_regex, actions: [ACTION,...], expected_files?, expected_changes?,
+   wine_registry: [{key, name, data},...]?}
+For GUI-only originals (TSLPatcher.exe has no command line). Same identity, argv,
+success log, marker, failure regex, expected file and manifest-change rules as
+patcher. The window is driven under an X display (CI: xvfb-run) with xdotool by
+the reviewed actions, run in order; nothing is inferred or defaulted. ACTION is
+exactly one of:
+  {wait_window: REGEX, timeout: SECONDS} -- poll for a visible window name match
+  {key: [KEYSYM,...], window: REGEX}  -- focus newest match, send keysyms to it
+  {type: TEXT, window: REGEX}          -- focus newest match, type TEXT
+  {click: [X, Y], window: REGEX}       -- click at window-relative coordinates
+  {sleep: SECONDS}                     -- at most 60
+  {wait_log: SECONDS}                  -- poll success_log until every marker is
+                                          present or a failure regex matches
+REGEX must compile (Python syntax; xdotool matches it as a POSIX extended regex,
+so keep to the common subset). SECONDS are positive finite; every wait is also
+bounded by the step deadline. Keysyms are nonempty, whitespace-free and do not
+start with "-". The newest match is the last window xdotool lists. TEXT and
+wine_registry data expand {game_win} to the Wine path of the game root ("Z:" plus
+the absolute POSIX path with "/" as "\\"). wine_registry entries run
+`wine reg add KEY /v NAME /d DATA /f` before launch; KEY starts with
+HKEY_LOCAL_MACHINE\\ or HKEY_CURRENT_USER\\. TSLPatcher stays open after
+installing, so after the last action the process group is killed and
+`wineserver -k` runs; the exit code is NOT evidence. The success log must be
+UTF-8; for gui_patcher only, a log that is not valid UTF-8 is decoded as cp1252
+(TSLPatcher writes plain ANSI RTF; markers match the raw RTF text). Undecodable
+bytes are never replaced. xdotool, wine and wineserver must be on PATH and
+DISPLAY set. On failure a best-effort root window screenshot (ImageMagick
+`import`, if present) is stored next to the private step log and visible window
+names are logged; neither masks the original error.
 Paths start with {archives}/, {extract}/ or {game}/. Extract writes only under
-{extract}; copy reads archives/extract and writes game; delete writes game.
+{extract}; copy reads archives/extract and writes game; delete and rename write game.
 Patcher and cwd must be in archives/extract. argv explicitly names the original
 patcher as argv[0], or argv[1] after an absolute wine/wine64 executable. No shell,
 substitution, guessed flags, download, plan generation, or automatic approval.
@@ -199,17 +245,61 @@ def copy_file(source, destination, deadline=None):
     shutil.copystat(source, destination)
 
 
-def copy_tree(source, destination, deadline=None):
+def casefold_index(directory):
+    """Map casefolded child names of an existing directory to the child paths."""
+    index = {}
+    if directory.is_dir() and not directory.is_symlink():
+        for child in directory.iterdir():
+            key = child.name.casefold()
+            require(key not in index, "destination has entries differing only in case: "
+                    + child.name)
+            index[key] = child
+    return index
+
+
+def lowercase_destination(destination):
+    """Destination token target for lowercase_names: reuse an existing entry whose
+    name casefolds equal (as named); otherwise the lowercased final component."""
+    existing = casefold_index(destination.parent).get(destination.name.casefold())
+    return existing if existing is not None else destination.parent / destination.name.lower()
+
+
+def lowercase_entry(directory, index, name, keep_file=False):
+    """Lowercased target for name in directory; an existing case variant is renamed
+    to the lowercase name so it is overwritten instead of duplicated. With keep_file
+    an existing file is returned as named (skip_existing leaves it untouched)."""
+    target = directory / name.lower()
+    existing = index.get(name.casefold())
+    if keep_file and existing is not None and existing.is_file() and not existing.is_symlink():
+        return existing
+    if existing is not None and existing.name != target.name:
+        require(not existing.is_symlink(), "symlink destination")
+        existing.rename(target)
+        index[name.casefold()] = target
+    return target
+
+
+def copy_tree(source, destination, deadline=None, lowercase=False, skip_existing=False):
     require(not source.is_symlink(), "symlink source")
     if source.is_file():
+        if skip_existing and destination.is_file() and not destination.is_symlink():
+            return
         copy_file(source, destination, deadline)
         return
     require(source.is_dir(), "copy source does not exist")
     require(not destination.is_symlink(), "symlink destination")
     destination.mkdir(parents=True, exist_ok=True)
-    for child in sorted(source.iterdir()):
+    children = sorted(source.iterdir())
+    index = {}
+    if lowercase:
+        names = [child.name.lower() for child in children]
+        require(len(set(names)) == len(names), "copy source names collide when lowercased")
+        index = casefold_index(destination)
+    for child in children:
         check_deadline(deadline)
-        copy_tree(child, destination / child.name, deadline)
+        target = (lowercase_entry(destination, index, child.name, skip_existing and child.is_file())
+                  if lowercase else destination / child.name)
+        copy_tree(child, target, deadline, lowercase, skip_existing)
     shutil.copystat(source, destination)
 
 
@@ -416,7 +506,10 @@ def validate_operation(operation, roots):
     require(isinstance(operation, dict), "operation must be an object")
     kind = operation.get("type")
     if kind in ("extract", "copy"):
-        fields(operation, ("type", "source", "destination"), ("expected_files",))
+        fields(operation, ("type", "source", "destination"),
+               ("expected_files",) + (("lowercase_names", "skip_existing") if kind == "copy" else ()))
+        for flag in ("lowercase_names", "skip_existing"):
+            require(type(operation.get(flag, False)) is bool, flag + " must be boolean")
         path_token(operation["source"], roots, ("archives",) if kind == "extract" else ("archives", "extract"))
         path_token(operation["destination"], roots, ("extract",) if kind == "extract" else ("game",))
         expected = operation.get("expected_files", {})
@@ -424,38 +517,123 @@ def validate_operation(operation, roots):
         for token, digest in expected.items():
             path_token(token, roots, ("game",))
             validate_digest(digest)
+    elif kind == "rename":
+        fields(operation, ("type", "source", "destination"), ("replace",))
+        source = path_token(operation["source"], roots, ("game",))
+        destination = path_token(operation["destination"], roots, ("game",))
+        require(type(operation.get("replace", False)) is bool, "replace must be boolean")
+        require(source != destination and not destination.is_relative_to(source),
+                "rename destination must differ from and lie outside its source")
     elif kind == "delete":
         fields(operation, ("type", "path"), ("missing_ok",))
         path_token(operation["path"], roots, ("game",))
         require(type(operation.get("missing_ok", False)) is bool, "missing_ok must be boolean")
     elif kind == "patcher":
-        fields(operation, ("type", "patcher", "sha256", "argv", "cwd",
-                           "success_log", "success_markers", "failure_regex"),
-               ("expected_files", "expected_changes"))
-        command_arguments(operation, roots)
-        validate_digest(operation["sha256"])
-        path_token(operation["success_log"], roots, ("game", "extract"))
-        for key in ("success_markers", "failure_regex"):
-            require(isinstance(operation[key], list) and operation[key]
-                    and all(isinstance(item, str) and item.strip() for item in operation[key]),
-                    key + " must be a nonempty list of nonempty strings")
-        for pattern in operation["failure_regex"]:
-            try:
-                re.compile(pattern, re.MULTILINE)
-            except re.error as error:
-                raise Blocked("invalid failure regex") from error
-        expected = operation.get("expected_files", {})
-        require(isinstance(expected, dict), "expected_files must be a mapping")
-        for token, digest in expected.items():
-            path_token(token, roots, ("game",))
-            validate_digest(digest)
-        if "expected_changes" in operation:
-            require(operation["expected_changes"] == "changed_manifest", "invalid expected_changes")
-        require(expected or operation.get("expected_changes") == "changed_manifest",
-                "patcher requires expected files or changed manifest proof")
-        require(operation["success_log"] not in expected, "installer log is not an expected game effect")
+        fields(operation, PATCHER_FIELDS, ("expected_files", "expected_changes"))
+        validate_patcher_fields(operation, roots)
+    elif kind == "gui_patcher":
+        fields(operation, PATCHER_FIELDS + ("actions",),
+               ("expected_files", "expected_changes", "wine_registry"))
+        validate_patcher_fields(operation, roots)
+        validate_gui_fields(operation)
     else:
         raise Blocked("unsupported operation")
+
+
+PATCHER_FIELDS = ("type", "patcher", "sha256", "argv", "cwd",
+                  "success_log", "success_markers", "failure_regex")
+GUI_ACTIONS = {"wait_window": ("wait_window", "timeout"), "key": ("key", "window"),
+               "type": ("type", "window"), "click": ("click", "window"),
+               "sleep": ("sleep",), "wait_log": ("wait_log",)}
+GUI_SLEEP_LIMIT = 60
+REGISTRY_ROOTS = ("HKEY_LOCAL_MACHINE\\", "HKEY_CURRENT_USER\\")
+
+
+def compile_regex(pattern, what):
+    require(isinstance(pattern, str) and pattern, what + " must be a nonempty string")
+    try:
+        return re.compile(pattern, re.MULTILINE)
+    except re.error as error:
+        raise Blocked("invalid " + what) from error
+
+
+def plain_text(value, what, allow_empty=False):
+    require(isinstance(value, str) and (allow_empty or value) and "\x00" not in value,
+            what + " must be a " + ("" if allow_empty else "nonempty ") + "string without NUL")
+
+
+def validate_gui_action(action):
+    require(isinstance(action, dict), "gui action must be an object")
+    kinds = [kind for kind in GUI_ACTIONS if kind in action]
+    require(len(kinds) == 1, "gui action must name exactly one action")
+    kind = kinds[0]
+    fields(action, GUI_ACTIONS[kind])
+    if kind == "wait_window":
+        compile_regex(action["wait_window"], "wait_window regex")
+        timeout_value(action["timeout"])
+    elif kind == "sleep":
+        require(timeout_value(action["sleep"]) <= GUI_SLEEP_LIMIT,
+                "sleep must be at most %d seconds" % GUI_SLEEP_LIMIT)
+    elif kind == "wait_log":
+        timeout_value(action["wait_log"])
+    else:
+        compile_regex(action["window"], "window regex")
+        if kind == "key":
+            keys = action["key"]
+            require(isinstance(keys, list) and keys and all(
+                isinstance(key, str) and key and not key.startswith("-")
+                and not any(character.isspace() for character in key) for key in keys),
+                "key must be a nonempty list of keysyms without whitespace or leading '-'")
+        elif kind == "type":
+            plain_text(action["type"], "type text")
+        else:
+            point = action["click"]
+            require(isinstance(point, list) and len(point) == 2
+                    and all(type(item) is int and item >= 0 for item in point),
+                    "click must be [X, Y] non-negative integers")
+    return kind
+
+
+def validate_gui_fields(operation):
+    actions = operation["actions"]
+    require(isinstance(actions, list) and actions, "actions must be a nonempty list")
+    for action in actions:
+        validate_gui_action(action)
+    registry = operation.get("wine_registry", [])
+    require(isinstance(registry, list), "wine_registry must be a list")
+    for entry in registry:
+        fields(entry, ("key", "name", "data"))
+        plain_text(entry["key"], "registry key")
+        require(any(entry["key"].startswith(root) and len(entry["key"]) > len(root)
+                    for root in REGISTRY_ROOTS),
+                "registry key must start with HKEY_LOCAL_MACHINE\\ or HKEY_CURRENT_USER\\")
+        plain_text(entry["name"], "registry value name")
+        plain_text(entry["data"], "registry data", allow_empty=True)
+
+
+def validate_patcher_fields(operation, roots):
+    command_arguments(operation, roots)
+    validate_digest(operation["sha256"])
+    path_token(operation["success_log"], roots, ("game", "extract"))
+    for key in ("success_markers", "failure_regex"):
+        require(isinstance(operation[key], list) and operation[key]
+                and all(isinstance(item, str) and item.strip() for item in operation[key]),
+                key + " must be a nonempty list of nonempty strings")
+    for pattern in operation["failure_regex"]:
+        try:
+            re.compile(pattern, re.MULTILINE)
+        except re.error as error:
+            raise Blocked("invalid failure regex") from error
+    expected = operation.get("expected_files", {})
+    require(isinstance(expected, dict), "expected_files must be a mapping")
+    for token, digest in expected.items():
+        path_token(token, roots, ("game",))
+        validate_digest(digest)
+    if "expected_changes" in operation:
+        require(operation["expected_changes"] == "changed_manifest", "invalid expected_changes")
+    require(expected or operation.get("expected_changes") == "changed_manifest",
+            "patcher requires expected files or changed manifest proof")
+    require(operation["success_log"] not in expected, "installer log is not an expected game effect")
 
 
 def extract_7z(source, destination, deadline, rollback_reserve=None):
@@ -673,32 +851,43 @@ def extract_payload(source, destination, deadline, rollback_reserve=None):
     capacity()
 
 
-def run_patcher(operation, roots, log, deadline):
+def prepare_patcher(operation, roots, deadline):
+    """Shared pre-launch checks: original patcher identity, fresh success log and
+    the game manifest the run must change."""
     patcher, cwd, argv = command_arguments(operation, roots)
     require(patcher.is_file() and cwd.is_dir(), "patcher or working directory missing")
     success_log = path_token(operation["success_log"], roots, ("game", "extract"))
     require(not success_log.exists(), "installer success log must be fresh")
-    before = manifest(roots["game"], deadline)
     require(sha256(patcher, deadline) == operation["sha256"], "patcher SHA256 mismatch")
+    before = manifest(roots["game"], deadline)
     check_deadline(deadline)
-    process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log,
-                               stderr=subprocess.STDOUT, start_new_session=True, shell=False)
-    try:
-        code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
-        require(code == 0, "original patcher exit code: " + str(code))
-    finally:
+    return cwd, argv, before
+
+
+def decode_installer_log(data, encodings):
+    """Strict decoding in the given order; bytes are never replaced or dropped."""
+    for encoding in encodings:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
+            return data.decode(encoding, errors="strict")
+        except UnicodeDecodeError:
+            continue
+    raise Blocked("installer success log is not valid " + " or ".join(encodings))
+
+
+def log_verdict(text, operation):
+    """(all success markers present, any reviewed failure regex matched)."""
+    return (all(marker in text for marker in operation["success_markers"]),
+            any(re.search(pattern, text, re.MULTILINE) for pattern in operation["failure_regex"]))
+
+
+def verify_patcher_result(operation, roots, before, deadline, encodings=("utf-8",)):
+    """Shared proof of a patcher run: fresh log with every marker and no failure
+    match, a changed game manifest and every expected file digest."""
     success_log = path_token(operation["success_log"], roots, ("game", "extract"))
     require(success_log.is_file(), "installer success log missing")
-    log_text = success_log.read_text(encoding="utf-8", errors="strict")
-    require(all(marker in log_text for marker in operation["success_markers"]),
-            "installer success marker missing")
-    require(not any(re.search(pattern, log_text, re.MULTILINE)
-                    for pattern in operation["failure_regex"]), "installer failure marker matched")
+    markers, failed = log_verdict(decode_installer_log(success_log.read_bytes(), encodings), operation)
+    require(markers, "installer success marker missing")
+    require(not failed, "installer failure marker matched")
     after = manifest(roots["game"], deadline)
     if success_log.is_relative_to(roots["game"]):
         after.pop(success_log.relative_to(roots["game"]).as_posix(), None)
@@ -712,12 +901,216 @@ def run_patcher(operation, roots, log, deadline):
     check_deadline(deadline)
 
 
+def stop_process_group(process):
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+
+
+def run_patcher(operation, roots, log, deadline):
+    cwd, argv, before = prepare_patcher(operation, roots, deadline)
+    process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log,
+                               stderr=subprocess.STDOUT, start_new_session=True, shell=False)
+    try:
+        code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        require(code == 0, "original patcher exit code: " + str(code))
+    finally:
+        stop_process_group(process)
+    verify_patcher_result(operation, roots, before, deadline)
+
+
+GUI_POLL = 0.25
+GUI_CLEANUP_SECONDS = 30
+GUI_LOG_ENCODINGS = ("utf-8", "cp1252")
+
+
+def game_win(roots):
+    return "Z:" + str(roots["game"]).replace("/", "\\")
+
+
+def gui_tools():
+    tools = {}
+    for name in ("xdotool", "wine", "wineserver"):
+        tools[name] = shutil.which(name)
+        require(tools[name] is not None, name + " executable missing (required by gui_patcher)")
+    require(os.environ.get("DISPLAY"), "gui_patcher requires an X display (DISPLAY unset; use xvfb-run)")
+    return tools
+
+
+def gui_note(log, text):
+    log.write(("[gui_patcher] " + text + "\n").encode("utf-8", errors="backslashreplace"))
+    log.flush()
+
+
+def remaining(deadline, limit=None):
+    check_deadline(deadline)
+    left = deadline - time.monotonic()
+    return max(0.001, left if limit is None else min(left, limit))
+
+
+def gui_command(argv, log, deadline, limit=None):
+    """Run one helper command bounded by the step deadline; stderr goes to the step log."""
+    gui_note(log, "run " + json.dumps(argv))
+    try:
+        return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log,
+                              timeout=remaining(deadline, limit), shell=False)
+    except subprocess.TimeoutExpired as error:
+        check_deadline(deadline)
+        raise Blocked("helper command timed out: " + argv[0]) from error
+
+
+def visible_windows(tools, pattern, log, deadline):
+    result = gui_command([tools["xdotool"], "search", "--onlyvisible", "--name", pattern], log, deadline)
+    return result.stdout.decode("ascii", errors="strict").split() if result.returncode == 0 else []
+
+
+def newest_window(tools, pattern, log, deadline):
+    windows = visible_windows(tools, pattern, log, deadline)
+    require(windows, "no visible window matches: " + pattern)
+    return windows[-1]
+
+
+def focus_window(tools, pattern, log, deadline):
+    window = newest_window(tools, pattern, log, deadline)
+    result = gui_command([tools["xdotool"], "windowfocus", window], log, deadline)
+    require(result.returncode == 0, "cannot focus window: " + pattern)
+    return window
+
+
+def wait_for_log(operation, roots, seconds, log, deadline):
+    """Wait until the success log settles on a verdict; the verdict itself is
+    checked afterwards by verify_patcher_result."""
+    success_log = path_token(operation["success_log"], roots, ("game", "extract"))
+    limit = time.monotonic() + seconds
+    while True:
+        check_deadline(deadline)
+        if success_log.is_file():
+            try:
+                text = decode_installer_log(success_log.read_bytes(), GUI_LOG_ENCODINGS)
+            except Blocked:
+                text = None
+            if text is not None and any(log_verdict(text, operation)):
+                gui_note(log, "success log settled")
+                return
+        require(time.monotonic() < limit, "installer success log did not settle within %s seconds" % seconds)
+        time.sleep(min(GUI_POLL, remaining(deadline)))
+
+
+def run_gui_action(action, operation, roots, tools, log, deadline):
+    kind = validate_gui_action(action)
+    gui_note(log, "action " + json.dumps(action))
+    if kind == "wait_window":
+        limit = time.monotonic() + action["timeout"]
+        while not visible_windows(tools, action["wait_window"], log, deadline):
+            require(time.monotonic() < limit, "window did not appear within %s seconds: %s"
+                    % (action["timeout"], action["wait_window"]))
+            time.sleep(min(GUI_POLL, remaining(deadline)))
+    elif kind == "sleep":
+        time.sleep(remaining(deadline, action["sleep"]))
+        check_deadline(deadline)
+    elif kind == "wait_log":
+        wait_for_log(operation, roots, action["wait_log"], log, deadline)
+    elif kind == "key":
+        window = focus_window(tools, action["window"], log, deadline)
+        result = gui_command([tools["xdotool"], "key", "--window", window, "--delay", "100"]
+                             + action["key"], log, deadline)
+        require(result.returncode == 0, "xdotool key failed")
+    elif kind == "type":
+        focus_window(tools, action["window"], log, deadline)
+        text = action["type"].replace("{game_win}", game_win(roots))
+        result = gui_command([tools["xdotool"], "type", "--delay", "30", "--", text], log, deadline)
+        require(result.returncode == 0, "xdotool type failed")
+    else:
+        window = newest_window(tools, action["window"], log, deadline)
+        result = gui_command([tools["xdotool"], "mousemove", "--window", window,
+                              str(action["click"][0]), str(action["click"][1]), "click", "1"],
+                             log, deadline)
+        require(result.returncode == 0, "xdotool click failed")
+
+
+def gui_diagnostics(tools, log):
+    """Best effort failure evidence; never raises, never masks the original error."""
+    unbounded = time.monotonic() + 3600
+    try:
+        importer = shutil.which("import")
+        directory = Path(log.name).parent if isinstance(getattr(log, "name", None), str) else None
+        if importer is not None and directory is not None:
+            index = 1
+            while (directory / ("gui-failure-%d.png" % index)).exists():
+                index += 1
+            gui_command([importer, "-window", "root", str(directory / ("gui-failure-%d.png" % index))],
+                        log, unbounded, GUI_CLEANUP_SECONDS)
+        if tools.get("xdotool"):
+            for window in visible_windows(tools, ".", log, unbounded):
+                name = gui_command([tools["xdotool"], "getwindowname", window], log, unbounded, 10)
+                gui_note(log, "visible window %s: %s" % (window, name.stdout.decode("utf-8", "backslashreplace").strip()))
+    except Exception as error:
+        try:
+            gui_note(log, "diagnostics incomplete: " + str(error))
+        except Exception:
+            pass
+
+
+def stop_gui(process, tools, log):
+    if process.poll() is not None:
+        gui_note(log, "patcher exited early with code %s (not evidence)" % process.returncode)
+    stop_process_group(process)
+    try:
+        gui_command([tools["wineserver"], "-k"], log, time.monotonic() + GUI_CLEANUP_SECONDS)
+    except Exception as error:
+        gui_note(log, "wineserver -k failed: " + str(error))
+
+
+def run_gui_patcher(operation, roots, log, deadline):
+    tools = gui_tools()
+    diagnosed = False
+    try:
+        cwd, argv, before = prepare_patcher(operation, roots, deadline)
+        for entry in operation.get("wine_registry", []):
+            data = entry["data"].replace("{game_win}", game_win(roots))
+            result = gui_command([tools["wine"], "reg", "add", entry["key"], "/v", entry["name"],
+                                  "/d", data, "/f"], log, deadline)
+            require(result.returncode == 0, "wine reg add failed: " + entry["key"])
+        check_deadline(deadline)
+        log.flush()
+        process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log,
+                                   stderr=subprocess.STDOUT, start_new_session=True, shell=False)
+        try:
+            for action in operation["actions"]:
+                run_gui_action(action, operation, roots, tools, log, deadline)
+        except BaseException:
+            gui_diagnostics(tools, log)
+            diagnosed = True
+            raise
+        finally:
+            stop_gui(process, tools, log)
+        verify_patcher_result(operation, roots, before, deadline, GUI_LOG_ENCODINGS)
+    except BaseException:
+        if not diagnosed:
+            gui_diagnostics(tools, log)
+        raise
+
+
 def execute(operation, roots, log, deadline, rollback_reserve=None):
     validate_operation(operation, roots)
     check_deadline(deadline)
     kind = operation["type"]
     if kind == "patcher":
         run_patcher(operation, roots, log, deadline)
+    elif kind == "gui_patcher":
+        run_gui_patcher(operation, roots, log, deadline)
+    elif kind == "rename":
+        source = path_token(operation["source"], roots, ("game",))
+        destination = path_token(operation["destination"], roots, ("game",))
+        require(source.exists(), "rename source missing")
+        if destination.exists():
+            require(operation.get("replace", False), "rename destination exists (replace not set)")
+            require(destination.is_file() and source.is_file(),
+                    "rename may replace only a file with a file, never a directory")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(source, destination)
     elif kind == "delete":
         path = path_token(operation["path"], roots, ("game",))
         if path.is_dir():
@@ -731,8 +1124,12 @@ def execute(operation, roots, log, deadline, rollback_reserve=None):
         destination = path_token(operation["destination"], roots, ("extract", "game"))
         if kind == "extract":
             extract(source, destination, deadline, rollback_reserve)
+        elif operation.get("lowercase_names", False):
+            copy_tree(source, lowercase_destination(destination), deadline, lowercase=True,
+                      skip_existing=operation.get("skip_existing", False))
         else:
-            copy_tree(source, destination, deadline)
+            copy_tree(source, destination, deadline,
+                      skip_existing=operation.get("skip_existing", False))
         for token, digest in operation.get("expected_files", {}).items():
             target = path_token(token, roots, ("game",))
             require(target.is_file() and sha256(target, deadline) == digest,

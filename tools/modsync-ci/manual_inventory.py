@@ -3,9 +3,9 @@
 
 Writes one JSON document: for every file under --archives its SHA-256 and size, every
 member it extracts to (relative path, size, SHA-256), the patcher executables it ships
-(TSLPatcher.exe, HoloPatcher.exe and any other .exe, each hashed) and the text of every
+(TSLPatcher.exe, HoloPatcher.exe and any other .exe, each hashed), the text of every
 TSLPatcher/HoloPatcher configuration file (namespaces.ini in full, changes.ini's [Settings]
-section and section list). The archive map from `cache.py restore --archive-map` ties
+section and section list) and of every small readme/script (.txt, .bat, .ini, ...). The archive map from `cache.py restore --archive-map` ties
 every guide link to its restored file names.
 
 It reads, extracts into a private scratch directory and hashes; it never decides which
@@ -27,6 +27,8 @@ import sys
 import tempfile
 
 INI_LIMIT = 256 * 1024
+TEXT_LIMIT = 64 * 1024
+TEXT_SUFFIXES = (".txt", ".bat", ".cmd", ".sh", ".ini", ".md", ".nfo")
 EXTRACT_TIMEOUT = 900
 
 
@@ -79,7 +81,7 @@ def extract(archive, destination):
 
 
 def describe_tree(root):
-    members, patchers, configs = [], [], []
+    members, patchers, configs, texts = [], [], [], []
     for directory, directories, filenames in os.walk(root):
         directories.sort()
         for name in sorted(filenames):
@@ -94,7 +96,10 @@ def describe_tree(root):
                 patchers.append({"path": relative, "sha256": members[-1]["sha256"],
                                  "kind": ("tslpatcher" if "tslpatcher" in lowered
                                           else "holopatcher" if "holopatcher" in lowered else "other")})
-            elif lowered in ("namespaces.ini", "changes.ini"):
+            if lowered.endswith(TEXT_SUFFIXES) and path.stat().st_size <= TEXT_LIMIT \
+                    and lowered not in ("namespaces.ini", "changes.ini"):
+                texts.append({"path": relative, "text": read_text(path)})
+            if lowered in ("namespaces.ini", "changes.ini"):
                 text = read_text(path)
                 entry = {"path": relative, "sections": ini_sections(text)}
                 if lowered == "namespaces.ini":
@@ -102,7 +107,7 @@ def describe_tree(root):
                 else:
                     entry["settings"] = ini_section(text, "Settings")
                 configs.append(entry)
-    return members, patchers, configs
+    return members, patchers, configs, texts
 
 
 def main(argv=None):
@@ -126,7 +131,8 @@ def main(argv=None):
             tool, error = extract(path, destination)
             if tool:
                 record["extracted_with"] = tool
-                record["members"], record["patchers"], record["configs"] = describe_tree(destination)
+                (record["members"], record["patchers"], record["configs"],
+                 record["texts"]) = describe_tree(destination)
             else:
                 record["extract_error"] = error
             shutil.rmtree(destination, ignore_errors=True)

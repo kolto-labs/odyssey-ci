@@ -43,8 +43,8 @@ approves operations itself. The full contract is in the docstring of
 
 - `guide_sha256` pins the guide; `archive_sha256` binds every archive input file.
 - `steps` follow every `###` heading in `## Mod List`, once each, in order. Each
-  step lists `operations`: `extract`, `copy`, `delete` or `patcher`, or is a
-  reviewed [omission](#omitting-a-step-partial-plans).
+  step lists `operations`: `extract`, `copy`, `rename`, `delete`, `patcher` or
+  `gui_patcher`, or is a reviewed [omission](#omitting-a-step-partial-plans).
 - `supplemental_sections` gives a written review for every heading outside the
   Mod List and links any steps it affects.
 - A `patcher` operation names the original patcher and its SHA-256, exact `argv`
@@ -52,8 +52,89 @@ approves operations itself. The full contract is in the docstring of
   exact success markers, failure regexes, and expected output files or a required
   manifest change.
 
+- A `copy` operation may set `lowercase_names: true` (default `false`). The game
+  tree is case-normalized (`override/` and `modules/` are lowercase), and the
+  guide's "move the files to Override" overwrites case-insensitively on Windows.
+  On Linux a differently cased copy would create a duplicate instead, so with
+  `lowercase_names` every file and directory written under the destination gets
+  its source name in lowercase. An existing entry that differs only in case is
+  overwritten and renamed to lowercase rather than duplicated. The destination's
+  own last path component is lowercased too, unless an entry with that name in a
+  different case already exists, in which case that entry is used as it is. Two
+  source entries that lowercase to the same name, or two existing entries that
+  differ only in case, stop the step.
+- A `copy` operation may set `skip_existing: true` (default `false`) for the
+  guide's "do not overwrite" instructions. A destination file that already exists
+  (matched case-insensitively when `lowercase_names` is also set) is left untouched
+  and that source file is not copied. Directories are still merged.
+- A `rename` operation, `{"type": "rename", "source": "{game}/...", "destination":
+  "{game}/...", "replace": false}`, moves an installed file or directory inside the
+  game tree, for guide instructions such as renaming `w_ionrfl_04.mdl` to
+  `w_ionrfl_004.mdl` in Override. The source must exist. The destination must not
+  exist unless `replace` is `true`, and then only an existing file can be replaced
+  by a file; replacing a directory is an error. Missing parent directories of the
+  destination are created.
+
 Use the mod's own original patcher. Do not substitute ModSync's `vendor/bin`
-patchers, OdyPatcher or another HoloPatcher build.
+patchers, OdyPatcher or another HoloPatcher build. A HoloPatcher build shipped by
+a mod has its own command line, so it runs as a `patcher` with that CLI.
+
+### GUI-only patchers (`gui_patcher`)
+
+TSLPatcher.exe has no command line: it is a GUI-only program, so it cannot be run as
+a `patcher`. A `gui_patcher` operation runs the original TSLPatcher.exe under Wine
+on the Xvfb display (the CI step runs `manual.py` under `xvfb-run -a`) and replays
+an explicit, reviewed list of UI actions with `xdotool`:
+
+```json
+{"type": "gui_patcher",
+ "patcher": "{extract}/example/TSLPatcher.exe",
+ "sha256": "<64 hex>",
+ "argv": ["/usr/bin/wine", "{extract}/example/TSLPatcher.exe"],
+ "cwd": "{extract}/example",
+ "success_log": "{extract}/example/installlog.rtf",
+ "success_markers": ["Done. Changes have been applied"],
+ "failure_regex": ["(?i)error"],
+ "expected_changes": "changed_manifest",
+ "wine_registry": [{"key": "HKEY_LOCAL_MACHINE\\Software\\BioWare\\SW\\KOTOR",
+                    "name": "Path", "data": "{game_win}"}],
+ "actions": [
+   {"wait_window": "^Game Data Installer", "timeout": 60},
+   {"click": [420, 380], "window": "^Game Data Installer"},
+   {"wait_window": "^Browse", "timeout": 30},
+   {"type": "{game_win}", "window": "^Browse"},
+   {"key": ["Return"], "window": "^Browse"},
+   {"wait_log": 600}]}
+```
+
+(The titles, coordinates and markers above are placeholders; take the real ones
+from a probe run of that patcher.)
+
+- It keeps every `patcher` guarantee: SHA-256 identity of the original patcher,
+  `argv` naming it directly or after an absolute `wine`/`wine64`, a fresh success
+  log with every exact marker and no failure regex match, expected files or a
+  required manifest change, and the game manifest must change.
+- `actions` run in order, each exactly one of `wait_window` (with `timeout`),
+  `key`, `type` or `click` (each with a `window` regex), `sleep` (at most 60
+  seconds) or `wait_log` (seconds to wait until every success marker is present
+  or a failure regex matches). Nothing is inferred: no default action, title,
+  keystroke or wait exists. Every wait is also bounded by the step deadline.
+- `{game_win}` in `type` text and `wine_registry` data expands to the game root as
+  a Wine path (`Z:` followed by the absolute path with `\` separators).
+  `wine_registry` entries run `wine reg add` before launch, for patchers that read
+  the install path from the registry; keys must start with
+  `HKEY_LOCAL_MACHINE\` or `HKEY_CURRENT_USER\`.
+- TSLPatcher stays open after installing, so after the last action `manual.py`
+  kills the process and runs `wineserver -k`. Its exit code is not evidence; only
+  the log, markers and manifest are.
+- TSLPatcher writes `installlog.rtf` as plain ANSI RTF. Markers match the raw RTF
+  text. The log is decoded as UTF-8 and, only for `gui_patcher`, as cp1252 if that
+  fails. Bytes are never replaced or dropped.
+- On failure the step log lists the visible window names, and if ImageMagick's
+  `import` is available a screenshot of the root window is stored next to it in the
+  private checkpoint directory.
+- `xdotool`, `wine` and `wineserver` must be on `PATH` and `DISPLAY` must be set,
+  otherwise the step fails with a clear error.
 
 ## Omitting a step (partial plans)
 
