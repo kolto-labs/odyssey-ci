@@ -1715,6 +1715,17 @@ def copy_tree(source, destination):
         shutil.copytree(source, destination, symlinks=True, dirs_exist_ok=True)
 
 
+def game_file_state(root):
+    """Every regular file under `root`: relative path -> (size, mtime_ns)."""
+    state = {}
+    for directory, _, filenames in os.walk(root, followlinks=False):
+        for name in filenames:
+            path = Path(directory) / name
+            info = path.lstat()
+            state[path.relative_to(root).as_posix()] = (info.st_size, info.st_mtime_ns)
+    return state
+
+
 def take_baseline(game, private, report):
     """Copy the game directory to the lane's private directory before the first install.
 
@@ -1946,6 +1957,8 @@ def install_with_quarantine(command, directories, deselect, converted, game, sou
     policy = report.get("quarantine") or start_quarantine(
         components, deselect, report, max_iterations, max_fraction)
     report.setdefault(INSTALL_QUARANTINE_KEY, [])
+    # An exit code alone does not prove an install: the game tree must change.
+    before = game_file_state(game)
     started = time.monotonic()
     if policy["max_iterations"] > 0:
         progress("baseline_copy: started")
@@ -2046,6 +2059,12 @@ def install_with_quarantine(command, directories, deselect, converted, game, sou
         report.pop("failure", None)
         if baseline is not None:
             shutil.rmtree(baseline[0], ignore_errors=True)
+        after = game_file_state(game)
+        changed = sum(after.get(path) != state for path, state in before.items()) + len(
+            after.keys() - before.keys())
+        report["game_files_changed"] = changed
+        if not changed:
+            raise Blocked("install_succeeded_but_changed_no_game_files")
         return
 
 
@@ -2520,7 +2539,7 @@ def print_diagnostics(report):
               f"({item['bind_diagnostic']}) not applied: {outcome}", file=sys.stderr)
     pending = report.get(PENDING_REVIEW_KEY)
     if pending:
-        print(f"::warning::ports: {pending['count']} component(s) DESELECTED pending human review "
+        print(f"::error::ports: {pending['count']} component(s) DESELECTED pending human review "
               f"(reviewed policy skips; not installed, not verified): "
               f"{pending['by_kind']['unreviewed_draft']} unreviewed draft(s), "
               f"{pending['by_kind']['dependent_of_deselected']} dependent(s) of a deselected component",
@@ -3328,6 +3347,13 @@ def main(argv=None):
             return 2
         try:
             execute(args, report)
+            pending = report.get(PENDING_REVIEW_KEY)
+            if report["status"] == "installed" and pending:
+                # Deselecting unreviewed components is not a pass: the guide was not installed.
+                report["status"] = "partial"
+                report["install_reason"] = report.get("reason")
+                report["reason"] = (f"deselected_pending_review: {pending['count']} component(s) "
+                                    "were never installed")
         except Blocked as error:
             report["reason"] = str(error)
         except (OSError, ValueError, TypeError, KeyError):

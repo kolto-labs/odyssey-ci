@@ -971,10 +971,10 @@ class FragmentControlTests(unittest.TestCase):
         self.assertIsNone(self.locate(words))
 
     def test_word_boxes_keep_only_the_centre_of_the_frame(self):
-        words = [("Centre", 400, 300, 500, 330), ("Corner", 10, 10, 100, 40)]
+        words = [("Centre", 900, 700, 1100, 760), ("Corner", 10, 10, 100, 40)]
         boxes = gui_rust.central_word_boxes(words, 2, 1000, 800)
         self.assertEqual([box["text"] for box in boxes], ["Centre"])
-        self.assertEqual((boxes[0]["x"], boxes[0]["y"]), (200, 150))
+        self.assertEqual((boxes[0]["x"], boxes[0]["y"]), (450, 350))
 
 
 class SingleClickTests(unittest.TestCase):

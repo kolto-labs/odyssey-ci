@@ -13,11 +13,11 @@ the port lanes are compared against.
 
 For each game:
 
-1. Looks for `ci/<game>-manual-plan.json`. If it is absent the job emits a
-   `::warning::` and a step summary ("manual lane skipped: no reviewed plan"), uploads
-   the `draft_plan.py` skeleton as `manual-drafts-<game>` and ends green without
-   installing anything. That is a visible, non-gating skip, never a pass: no manual
-   evidence exists until a human-reviewed plan is committed. A plan that exists but
+1. Looks for `ci/<game>-manual-plan.json`. If it is absent the job writes a step
+   summary ("manual lane failed: no reviewed plan, nothing installed"), uploads the
+   `draft_plan.py` skeleton as `manual-drafts-<game>` and then fails with an
+   `::error::`. No manual evidence exists until a human-reviewed plan is committed, so
+   the lane stays red until then. A plan that exists but
    fails validation, or a missing game or archive, still fails the job.
 2. Installs Wine, Xvfb and archive tools.
 3. Restores `game-<game>-v1` and runs `game_cache.py unpack`, which verifies every

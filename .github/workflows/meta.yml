@@ -38,13 +38,20 @@ jobs:
           git config --global user.name ${{ github.actor }}
           git config --global user.email ${{ github.actor_id }}+${{ github.actor }}
       - name: Update Metadata
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
           cd mod-builds
           meta="meta.json"
+          # Every commit of the push, not just the last one; a new branch has no usable "before".
+          base="$BEFORE"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base=HEAD~1
+          fi
           files=($(jq -r 'keys[]' "$meta"))
           for file in "${files[@]}"
           do
-            diff=$(git diff HEAD~1 -- "$file")
+            diff=$(git diff "$base" -- "$file")
             if [ -n "$diff" ]; then
               date=$(git show --pretty=format:"%cI" --no-patch)
               name=$(git show --pretty=format:"%cn" --no-patch)

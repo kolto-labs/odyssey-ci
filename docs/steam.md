@@ -22,7 +22,8 @@ Steam account. Fork and Dependabot pull requests get no secrets and skip it.
    (see [Game seed](#game-seed)). A usable seed skips SteamCMD and continues at step 4. A
    missing or failed seed is a `::warning::` and the job falls through to SteamCMD.
 4. Without a seed result, run SteamCMD, forcing the Windows build, and stop at the first
-   attempt that leaves `chitin.key` in the install directory:
+   attempt that exits 0, prints Steam's `Success! App '<id>' fully installed` line and
+   leaves `chitin.key` in the install directory:
    1. With `STEAM_CONFIG_VDF` set, sign in with that saved login and the username
       only.
    2. Otherwise, or if that did not produce the game, sign in with
@@ -44,9 +45,9 @@ Steam account. Fork and Dependabot pull requests get no secrets and skip it.
 
 The job fails if the game is still missing after these steps (no cache, no live
 artifact, no seed, SteamCMD gave nothing) or has no module `.rim` files. Nothing partial is saved. Each SteamCMD attempt that exits nonzero
-logs a `::warning::` with its status; the attempt loop still stops at the first
-one that leaves `chitin.key`, so a partial download that has `chitin.key` is
-caught by the `.rim` check, not retried. Steam's own error text (for example
+logs a `::warning::` with its status and counts as failed even when it left
+`chitin.key` behind, so a cut-off download is retried by the next attempt instead of
+being sealed and cached. Steam's own error text (for example
 `Two-factor code mismatch` or `Rate Limit Exceeded`) stays in the step log above each warning.
 
 The check looks for `modules` case-insensitively. The K2 lane's runner log names
@@ -256,7 +257,7 @@ the full guide covers its Aspyr-specific steps.
 
 ## Backup-code fallback
 
-If the saved config (`STEAM_CONFIG_VDF`) and the password sign-in both fail, the `game` job tries each code in the optional `STEAM_RECOVERY_CODE` secret, then each code in the optional `STEAM_GUARD_CODES` secret, as `+login <user> <password> <code>`. Both secrets are split on whitespace, so either can hold several codes. It stops as soon as `chitin.key` appears.
+If the saved config (`STEAM_CONFIG_VDF`) and the password sign-in both fail, the `game` job tries each code in the optional `STEAM_RECOVERY_CODE` secret, then each code in the optional `STEAM_GUARD_CODES` secret, as `+login <user> <password> <code>`. Both secrets are split on whitespace, so either can hold several codes. It stops as soon as an attempt finishes the download (exit 0 and Steam's `fully installed` line).
 
 Get the backup codes from Steam → Account details → Manage Steam Guard → Get backup codes. Set the secret from your own terminal so the value never shows up in a log:
 

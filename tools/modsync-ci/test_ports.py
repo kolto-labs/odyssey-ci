@@ -31,6 +31,18 @@ GUIDE = """# Guide
 """
 
 
+REAL_GAME_FILE_STATE = ports.game_file_state
+
+
+def setUpModule():
+    # Most fakes never write to the game directory. They stand in for an install that changed
+    # it; GameChangeTests below exercise the real check.
+    calls = iter(range(1 << 30))
+    patch = mock.patch.object(ports, "game_file_state", lambda root: {"call": next(calls)})
+    patch.start()
+    unittest.addModuleCleanup(patch.stop)
+
+
 def component(name, guid, **extra):
     lines = [
         "[[thisMod]]",
@@ -1674,12 +1686,14 @@ class LaneSkipTableTests(unittest.TestCase):
         self.assertEqual([(skip["section"], skip["heading"]) for skip in skips][:2], [FOUR_GB, ("Mod List", "TSLRCM")])
         self.assertEqual(len({skip["heading"] for skip in skips}), len(skips))
         self.assertIn("tslrcm2022.exe", skips[1]["reason"])
-        self.assertEqual(len(skips), 2 + 18 + 3)
-        self.assertEqual([skip["heading"] for skip in skips][-3:],
-                         ["PFHC03 Restoration", "Alignment Affects Force Powers", "K2 Remastered Cutscenes"])
+        self.assertEqual(len(skips), 2 + 18 + 4)
+        self.assertEqual([skip["heading"] for skip in skips][-4:],
+                         ["PFHC03 Restoration", "Alignment Affects Force Powers", "K2 Remastered Cutscenes",
+                          "Remove Duplicate TGA/TPC"])
         self.assertEqual([skip["heading"] for skip in ports.load_lane_skips("k1", SHIPPED_LANE_SKIPS, "typescript")],
                          ["4GB Patcher", "CineMalak", "Bendak Non-Darkside Option",
-                          "Alignment Affects Force Powers", "Character Startup Changes"])
+                          "Alignment Affects Force Powers", "Character Startup Changes",
+                          "Remove Duplicate TGA/TPC", "HR Menus"])
 
     def test_shipped_reasons_are_the_generated_reviewed_text(self):
         for game in ("k1", "k2"):
@@ -2953,11 +2967,11 @@ class InstallQuarantineTests(unittest.TestCase):
         self.assertNotIn("baseline", report["quarantine"])
         self.assertFalse(self.seen["install"]["baseline"])
 
-    def test_the_gui_lane_never_runs_the_install_quarantine(self):
+    def test_the_gui_lane_never_runs_the_cli_install(self):
         commands, report, error = self.run_lane(mode="gui")
         self.assertEqual(error, "gui_completion_report_missing")
         self.assertEqual(self.installs(commands), [])
-        self.assertNotIn("quarantined_install_failures", report)
+        self.assertEqual(report["quarantined_install_failures"], [])
 
     def test_the_baseline_is_an_independent_copy_and_restore_works_in_place(self):
         root = Path(tempfile.mkdtemp())
@@ -5455,6 +5469,87 @@ class RustGuiInstallQuarantineTests(unittest.TestCase):
             [self.stopped(failed_component="Alpha", failed_step="1")])
         self.assertEqual((error, stages), ("install_failed", ["gui"]))
         self.assertEqual(report["quarantine"]["stopped"]["reason"], "game_missing")
+
+
+class GameChangeTests(unittest.TestCase):
+    prepare = ExecuteCommandTests.prepare
+
+    def setUp(self):
+        patch = mock.patch.object(ports, "game_file_state", REAL_GAME_FILE_STATE)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def run_rust_cli(self, writes):
+        _, args = self.prepare("k2")
+        args.implementation = "rust"
+        args.guide.write_text(GUIDE.replace("## CRITICAL: Platform Notes\n\n### Platform Fix A\n\n", ""),
+                              encoding="utf-8")
+        (args.game_dir / "chitin.key").write_bytes(b"base")
+        text = document(
+            component("Mod One", "20000000-0000-0000-0000-000000000001"),
+            component("Mod Two", "20000000-0000-0000-0000-000000000002"),
+        )
+
+        def fake_run(command, source, private, stage, report, env):
+            if stage == "convert":
+                (private / "converted.toml").write_text(text, encoding="utf-8")
+            if stage == "install" and writes:
+                (args.game_dir / "override").mkdir()
+                (args.game_dir / "override" / "added.2da").write_bytes(b"mod")
+
+        report = {"commands": []}
+        with mock.patch.object(ports, "run", reviewing(fake_run)):
+            try:
+                ports.execute(args, report)
+            except ports.Blocked as blocked:
+                return report, str(blocked)
+        return report, None
+
+    def test_an_install_that_exits_zero_but_changes_nothing_fails(self):
+        report, error = self.run_rust_cli(writes=False)
+        self.assertEqual(error, "install_succeeded_but_changed_no_game_files")
+        self.assertEqual(report["game_files_changed"], 0)
+        self.assertNotEqual(report.get("status"), "installed")
+
+    def test_an_install_that_writes_game_files_passes(self):
+        report, error = self.run_rust_cli(writes=True)
+        self.assertIsNone(error)
+        self.assertEqual(report["status"], "installed")
+        self.assertEqual(report["game_files_changed"], 1)
+
+    def test_a_modified_file_counts_as_a_change(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, root)
+        (root / "dialog.tlk").write_bytes(b"one")
+        before = ports.game_file_state(root)
+        (root / "dialog.tlk").write_bytes(b"three")
+        self.assertNotEqual(before, ports.game_file_state(root))
+
+
+class PendingReviewMainTests(unittest.TestCase):
+    def test_an_install_with_components_deselected_pending_review_is_partial_and_fails(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, root)
+        for name in ("source", "game", "archives", "content/k2"):
+            (root / name).mkdir(parents=True)
+        (root / "content/k2/full.md").write_text("x", encoding="utf-8")
+
+        def fake_execute(args, report):
+            report[ports.PENDING_REVIEW_KEY] = {"count": 2, "by_kind": {}, "components": []}
+            report["status"] = "installed"
+            report["reason"] = "native_install_command_succeeded"
+
+        argv = ["--implementation", "rust", "--mode", "cli", "--source", str(root / "source"),
+                "--guide", str(root / "content/k2/full.md"), "--game-dir", str(root / "game"),
+                "--archives", str(root / "archives"), "--work-dir", str(root / "work"),
+                "--report", str(root / "out/report.json")]
+        with mock.patch.object(ports, "execute", fake_execute), mock.patch.object(ports, "print_diagnostics"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ports.main(argv), 1)
+        written = json.loads((root / "out/report.json").read_text(encoding="utf-8"))
+        self.assertEqual(written["status"], "partial")
+        self.assertEqual(written["install_reason"], "native_install_command_succeeded")
+        self.assertTrue(written["reason"].startswith("deselected_pending_review: 2 component(s)"))
 
 
 if __name__ == "__main__":

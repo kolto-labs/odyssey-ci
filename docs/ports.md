@@ -190,11 +190,14 @@ remainder installs:
 - **Visible summary.** The lane report has `deselected_pending_review`: `count`,
   `by_kind` (`unreviewed_draft`, `dependent_of_deselected`) and one record per component
   (`component_guid`, `heading`, `kind`). `ports.py` repeats it on stderr in the CI log:
-  `::warning::ports: N component(s) DESELECTED pending human review ... ` followed by one
+  `::error::ports: N component(s) DESELECTED pending human review ... ` followed by one
   `deselected pending review: <heading> [<guid>] (<kind>)` line per component. These
   components are also in `skipped_by_reviewed_policy`, so the GUI lane never reports them
   as covered; the GUI `gui_covered_components` count excludes them. Remove an entry (or
   review the draft and rerun the generator) to put a component back.
+- **The lane fails while any remain.** These entries let the rest of the guide install so
+  its failures are visible, but a lane that left components out pending review has not
+  installed the guide: `ports.py` reports `partial` and exits 1 after the install.
 - **Reproducible generation.** `tools/modsync-ci/deselect_unreviewed.py` writes the
   entries from the log lines `ports: unreviewed draft still selected: <guid> (<name>)`:
 
@@ -1039,9 +1042,15 @@ lane-diagnostics.seal --destination DIR` with the same key.
 Each run writes logs, the converted TOML and GUI evidence to a private `ports-*`
 directory under the work directory. Reports hold reason codes, stage exit codes and
 hashes, but GUI reports include private paths; review them before publishing.
-Exit 0 means the port's own install completed. It is not, by itself, proof of
+Exit 0 means the port's own install completed and, for the CLI lanes, changed at least
+one file in the game directory (`game_files_changed`; an install that exits 0 but leaves
+the game untouched fails with `install_succeeded_but_changed_no_game_files`). An install
+that finished while the report lists `deselected_pending_review` is **not** exit 0: the
+status is `partial`, the reason `deselected_pending_review: N component(s) were never
+installed` (the install's own reason is kept as `install_reason`), and the lane fails
+until those components are reviewed and put back. Exit 0 is not, by itself, proof of
 parity with the manual reference, and for the Rust lanes it is a partial install
-whenever the report lists `deselected_pending_review`, `skipped_by_reviewed_policy` or
+whenever the report lists `skipped_by_reviewed_policy` or
 `quarantined_validate_failures` or `quarantined_install_failures` entries (see
 [Runtime quarantine](#runtime-quarantine-of-validate-failures-rust-lanes-only) and
 [install quarantine](#runtime-quarantine-of-install-failures-rust-cli-lane)).

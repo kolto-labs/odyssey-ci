@@ -27,8 +27,14 @@ requests and releases only restore (see [Actions cache size and eviction](#actio
 game (k1, k2) ──┬──> install (k1|k2 × rust|typescript × cli|gui)   8 jobs
 mods ───────────┴──> manual (k1|k2)                                2 jobs
 p2p-loopback                                                       1 job, standalone
+tools                                                              1 job, standalone
 mods ───> artstore refresh                                         schedule / dispatch only
 ```
+
+**`tools`** — Runs every `tools/modsync-ci/test_*.py` unit test
+(`python3 -m unittest discover -s tools/modsync-ci`). It needs no secrets and runs on
+every event, so a broken coverage, quarantine, receipt or cache guard fails CI instead
+of silently passing a lane.
 
 `install` and `manual` wait for `game` and `mods` but still run when either of
 them failed, as long as `game` was not skipped. Each lane is independent
@@ -44,8 +50,10 @@ or `modules/` holds no `.rim` file, at the end, the job fails (it prints a game 
 first). A cache hit with no backup, or one that expires within 14 days, restores the cache
 and uploads the backup (90 days); a fresh seed or SteamCMD result uploads it too. The backup is the
 `CACHE_ENCRYPTION_KEY` seal cut into sealed parts of at most 2000 MiB (artstore envelope, so
-the public artifact holds no game data in the clear) plus `manifest.json`. Backup problems
-are `::warning::`s. Runs k1, then k2, on one Steam account. The Monday/Thursday schedule keeps
+the public artifact holds no game data in the clear) plus `manifest.json`. A backup that
+was needed but could not be staged or uploaded fails the job in its last step (after the
+cache is saved); the install lanes still run, because they only need `game` not to be
+skipped. Runs k1, then k2, on one Steam account. The Monday/Thursday schedule keeps
 both game caches and backups fresh; see [steam.md](steam.md#game-backup-artifact).
 
 **`mods`** — Restores the newest `mod-archives-*` Actions cache, runs `cache.py
@@ -71,8 +79,10 @@ R2 bucket current when its write secrets exist and otherwise skips itself. The j
 installs `7zip` (with `7zip-rar`), `megatools`, `libarchive-tools` (`bsdtar`),
 `unrar` when available, and `gdown`, so `cache.py` can fetch MEGA and Google Drive
 links and check RAR/7z archives. It is the only job that saves the cache or gets the
-R2 write credentials. It is an accelerator and `continue-on-error` is set (also on
-both refresh steps), so a failure never blocks an install. See [cache.md](cache.md).
+R2 write credentials. It is an accelerator: the job has `continue-on-error`, so a
+failure never blocks an install, but it still shows red when the archive refresh, an
+artifact-store publish step or the round trip failed (`Fail when the refresh, publish or
+round trip failed`). Only the optional R2 refresh step never fails the job. See [cache.md](cache.md).
 The refresh also uses and feeds the artifact store, and the job ends with the publish
 steps described in [Artifact store (artstore)](#artifact-store-artstore).
 
@@ -80,7 +90,8 @@ steps described in [Artifact store (artstore)](#artifact-store-artstore).
 `seed_archives` dispatch), after `mods`, in the same `mod-cache-writer` concurrency
 group. It renews artifact-store blobs that are close to expiry and prunes the store;
 see [Artifact store (artstore)](#artifact-store-artstore). It is not a dependency of
-any lane.
+any lane. Any planned blob that could not be fetched, or a failed staging or upload,
+fails the job in `Fail when expiring blobs were not renewed`; the prune still runs.
 
 **`install`** — Starts with the lane checks below, then checks out the ModSync
 source for the implementation (the repository named by `MODSYNC_RS_REPOSITORY` or
@@ -164,7 +175,7 @@ named section or step may pass it. Checked against the lane code on the current
 | `rust` + `cli` | Yes. `ports.py` runs `install --phase all`; the converter leaves widescreen components selected (`IsSelected = true`, `WidescreenOnly = true`) | Not allowed |
 | `rust` + `gui` | No. `ports.py` passes `--exclude-widescreen` to `gui_rust.py`, which deselects every widescreen-only component in a private copy of the converted TOML and reports it as not covered | Not wired |
 | `typescript` + `cli`/`gui` | Not selected for install (`select_base_components`). Reviewed policy skips are left out by `--select` of the non-skipped component GUIDs (TypeScript has no `--deselect`), and both lanes require a reviewed manifest that does not exist yet. The `cli` lane now attempts a physical install (`--ci-physical-install`, see below); the `gui` lane does not | Not wired |
-| `manual` | Unknown: depends on the human-reviewed `ci/<game>-manual-plan.json`, which does not exist. The job is non-gating: without the plan it installs nothing, ends green with a `::warning::` and a `$GITHUB_STEP_SUMMARY` line ("manual lane skipped: no reviewed plan; draft attached"), and uploads `draft_plan.py` output as artifact `manual-drafts-<game>` (14 days) | Not wired |
+| `manual` | Unknown: depends on the human-reviewed `ci/<game>-manual-plan.json`, which does not exist. Without the plan it installs nothing and fails with an `::error::` after uploading `draft_plan.py` output as artifact `manual-drafts-<game>` (14 days) | Not wired |
 
 Reviewed policy (step-scoped, never a whole section). **Wired for all four install
 lanes** (`rust`/`typescript` x `cli`/`gui`) in the `Restore required mod archives`
@@ -290,15 +301,20 @@ and `Execute` steps, and still require the reviewed manifest described below.
 **`p2p-loopback`** — Standalone; needs no game, cache or other job. Checks out the
 Rust ModSync source (same variable, secret and credential setup as `install`),
 builds `modsync`, then runs `tools/modsync-ci/p2p_loopback.py`. The script creates
-a random 3 MB zip, starts `modsync torrent-seed <zip> --no-proxy`, reads the JSON
-line it prints (`magnet`, `sha256`, `peer`), downloads with `modsync
-torrent-download <magnet> <out> --sha256 <hash> --peer 127.0.0.1:<port>
---no-proxy`, and compares the result byte for byte with `cmp`. It then repeats the
-download with a wrong `--sha256` and requires a refusal and no output file.
+a random 3 MB zip and mints its magnet with `modsync torrent-seed <zip> --no-proxy`,
+which it then stops. It shares the zip under that magnet with `modsync torrent-seed
+<zip> --authored-magnet <magnet> --share-ratio 0 --share-hours 0 --no-proxy`, downloads
+with `modsync torrent-download <magnet> <out> --sha256 <hash> --peer 127.0.0.1:<port>
+--no-proxy` and compares the result byte for byte with `cmp`. A matching file alone
+does not show where the bytes came from, so the seeder is then stopped and its
+`uploadedBytes` must be at least the fixture size. A fresh seeder then serves a download
+with a wrong `--sha256`: it must exit nonzero with `SHA-256 mismatch` on stderr, leave
+no output file, and the seeder must again report uploading the whole fixture, so the
+refusal is the hash check after a real transfer, not an unrelated error.
 
 ModSync.rs implements this transfer with `librqbit`. The job proves only that a
-seed and a downloader on the same runner exchange a file byte for byte and that a
-wrong hash is rejected. It does not test DHT, trackers, SOCKS5, NAT traversal or
+seed and a downloader on the same runner move a file over the peer connection and
+that a wrong hash is rejected after the transfer. It does not test DHT, trackers, SOCKS5, NAT traversal or
 any GUI.
 
 **ModSync.ts and P2P:** ModSync.ts has no P2P implementation, so no job covers it
@@ -306,12 +322,11 @@ and the `typescript` lanes make no P2P claim.
 
 **`manual`** — Installs the same guide step by step with each mod's original
 patcher under Wine, from a human-reviewed plan at `ci/<game>-manual-plan.json`.
-The job is non-gating while the plan is missing: the `Require the reviewed manual
-plan` step emits a `::warning::` and a step summary ("manual lane skipped: no reviewed
-plan; draft attached"), runs `draft_plan.py --out-dir "$RUNNER_TEMP/drafts"` and uploads
-the drafts as `manual-drafts-<game>` (14 days), skips every install step and ends green.
-Nothing is installed or verified in that case, so the lane is not evidence of a manual
-install. When the plan exists, the job restores the game and archives the same way as
+While the plan is missing the job fails: the `Require the reviewed manual plan` step
+writes a step summary ("manual lane failed: no reviewed plan, nothing installed; draft
+attached"), `draft_plan.py --out-dir "$RUNNER_TEMP/drafts"` runs and the drafts are
+uploaded as `manual-drafts-<game>` (14 days), then `Fail without a reviewed plan` emits
+an `::error::` and fails the job. A lane that installed nothing never ends green. When the plan exists, the job restores the game and archives the same way as
 `install` and runs `manual.py`, which still fails the job if the plan fails validation
 or the game or archives are missing. `report.json` is uploaded as `manual-report-<game>`
 (`if: always()`, 14 days). See [manual-lane.md](manual-lane.md).
@@ -452,12 +467,13 @@ the cache prune then:
 
 These steps run only on `push` (to `dev`), `schedule`, `release` and `workflow_dispatch`.
 Pull-request runs from this repository may restore from the store but never publish.
-Every publish step has `continue-on-error: true`, and a final step prints a
-`::warning::` when any of them failed, so a store problem never fails `mods` or a lane.
+Every publish step has `continue-on-error: true`, so the remaining steps still run, and
+a store problem never fails a lane. It does fail the (non-blocking) `mods` job: a final
+step reports `::error::` and exits 1 when any of them failed.
 The pack and index artifacts use `if-exists: skip`, so a re-run attempt that reuses a
 name is not an error. Without `CACHE_ENCRYPTION_KEY` staging is skipped with a notice.
 
-The last step, `Verify artifact store round trip`, fetches the smallest blob just published (or the smallest one in `artstore.py list` when nothing was published) back with `artstore.py fetch`, compares its SHA-256 and writes `artstore round trip OK: <sha prefix> <bytes> in <seconds>s` to the step summary; a failure only emits a `::warning::`.
+The last step, `Verify artifact store round trip`, fetches the smallest blob just published (or the smallest one in `artstore.py list` when nothing was published) back with `artstore.py fetch`, compares its SHA-256 and writes `artstore round trip OK: <sha prefix> <bytes> in <seconds>s` to the step summary; a failure emits an `::error::` and fails the `mods` job (not the lanes).
 
 <a id="deferred-packs"></a>Deferred packs. When more blobs are due than the
 `--max-packs` upload slots hold, the surplus is not sealed. `stage` records each one under

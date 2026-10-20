@@ -47,6 +47,20 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The guards the lanes rely on (coverage, quarantine, receipts, cache verification) are only as good as
+  # their unit tests, so run them on every event. Needs no secrets.
+  tools:
+    name: tools unit tests
+    if: ${{ !inputs.seed_archives }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run the tools/modsync-ci unit tests
+        run: python3 -m unittest discover -s tools/modsync-ci -p 'test_*.py'
+
   # Fork and dependabot pull requests get no secrets, so they skip every job (install jobs need game).
   game:
     name: game (${{ matrix.game }})
@@ -141,13 +155,21 @@ jobs:
           install=(+app_update "$APP_ID" validate +quit)
           log="$RUNNER_TEMP/steamcmd-attempt.log"
           : > "$log"
-          trap 'rm -f "$log"' EXIT
-          # One SteamCMD sign-in attempt. Steam's output goes to the job log and to $log (the last attempt only).
+          trap 'rm -f "$log" "$log.status"' EXIT
+          # One SteamCMD sign-in attempt. Steam's output goes to the job log and to $log (the last attempt only),
+          # its exit status to $log.status (a file, because the password attempt runs in a pipeline subshell).
           attempt() {
             local label=$1 status=0
             shift
             "$@" 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+            echo "$status" > "$log.status"
             [[ $status -eq 0 ]] || echo "::warning::steamcmd ($label) exited with status $status"
+          }
+          # chitin.key alone is not a finished download: a failed or cut-off app_update can leave a partial
+          # install behind, which would then be sealed and cached. Only a clean exit with Steam's own success line counts.
+          installed() {
+            [[ "$(cat "$log.status" 2>/dev/null)" == 0 && -f "$RUNNER_TEMP/game/chitin.key" ]] \
+              && grep -q "Success! App '$APP_ID' fully installed" "$log"
           }
           # Once Steam answers "Rate Limit Exceeded", every further sign-in only extends the lockout and the codes
           # it has not checked yet are still unused, so stop and keep them for the next run.
@@ -158,7 +180,7 @@ jobs:
             printf '%s' "$STEAM_CONFIG_VDF" | base64 -d > "$HOME/Steam/config/config.vdf"
             attempt "saved login" "$steamcmd" "${options[@]}" +@NoPromptForPassword 1 +login "$STEAM_USERNAME" "${install[@]}" </dev/null
           fi
-          if [[ ! -f "$RUNNER_TEMP/game/chitin.key" ]] && ! rate_limited; then
+          if ! installed && ! rate_limited; then
             printf '%s\n' "$STEAM_PASSWORD" | attempt "password login" "$steamcmd" "${options[@]}" +login "$STEAM_USERNAME" "${install[@]}"
           fi
           # Fallback: the recovery code(s), then the Steam Guard backup codes, each as the code of a password login.
@@ -169,12 +191,12 @@ jobs:
           n=0
           for code in "${codes[@]}"; do
             n=$((n + 1))
-            [[ -f "$RUNNER_TEMP/game/chitin.key" ]] && break
+            installed && break
             rate_limited && break
             echo "Trying Steam Guard code $n of ${#codes[@]} (STEAM_RECOVERY_CODE first, then STEAM_GUARD_CODES)."
             attempt "Steam Guard code $n of ${#codes[@]}" "$steamcmd" "${options[@]}" +login "$STEAM_USERNAME" "$STEAM_PASSWORD" "$code" "${install[@]}" </dev/null
           done
-          if [[ ! -f "$RUNNER_TEMP/game/chitin.key" ]]; then
+          if ! installed; then
             if rate_limited; then
               echo "::warning::Steam answered Rate Limit Exceeded, so the remaining sign-ins were not tried; wait before re-running this workflow (see docs/steam.md)"
             fi
@@ -212,6 +234,7 @@ jobs:
         run: python tools/modsync-ci/game_backup.py stage --game "$GAME" --seal-dir "$RUNNER_TEMP/sealed" --out-dir "$RUNNER_TEMP/game-backup"
 
       - name: Upload encrypted game backup
+        id: backup_upload
         if: steps.stage.outputs.staged == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v4
@@ -221,6 +244,14 @@ jobs:
           retention-days: 90
           compression-level: 0
           if-no-files-found: error
+
+      # The backup steps continue on error so the cache above is kept, but a needed backup that was not
+      # written (K1 cannot be re-fetched headlessly) fails this job. The install lanes still run.
+      - name: Fail when the needed game backup was not written
+        if: steps.stage.outcome != 'skipped' && (steps.stage.outputs.staged != 'true' || steps.backup_upload.outcome != 'success')
+        run: |
+          echo "::error::the game-$GAME-sealed backup was needed but was not staged or uploaded; see the steps above."
+          exit 1
 
   mods:
     if: ${{ !inputs.seed_archives && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
@@ -276,6 +307,7 @@ jobs:
       # repository cache. GITHUB_TOKEN switches the artifact-store tier on; --emit-stage-manifest lists
       # the cached objects the store lacks or will soon expire, for the publish steps at the end.
       - name: Refresh the mod archive cache
+        id: refresh
         continue-on-error: true
         timeout-minutes: 60
         env:
@@ -390,8 +422,8 @@ jobs:
           fi
           if ! python tools/modsync-ci/artstore.py stage --manifest-json "$manifest" \
               --packdir "$RUNNER_TEMP/artstore-pack" --pack-budget 3221225472 > "$RUNNER_TEMP/artstore-stage.json"; then
-            echo "::warning::Artifact store staging failed; nothing was published this run."
-            exit 0
+            echo "::error::Artifact store staging failed; nothing was published this run."
+            exit 1
           fi
           python3 - "$RUNNER_TEMP/artstore-stage.json" >> "$GITHUB_OUTPUT" <<'PY'
           import json, os, sys
@@ -444,10 +476,10 @@ jobs:
           if-exists: skip
       - name: Report artifact store publish problems
         if: ${{ always() && (steps.stage.outcome == 'failure' || steps.up1.outcome == 'failure' || steps.up2.outcome == 'failure' || steps.up3.outcome == 'failure' || steps.upindex.outcome == 'failure') }}
-        run: echo "::warning::Artifact store publish failed; the install lanes fall back to the other archive sources."
+        run: echo "::error::Artifact store publish failed; the install lanes fall back to the other archive sources."
       # Read-path proof from a real runner: fetch the smallest blob just published (or, when nothing was
       # published this run, the smallest blob in `artstore.py list`) back through the store and compare its
-      # SHA-256. A failure is a visible ::warning:: and a failed (but non-blocking) step, never a failed job.
+      # SHA-256. A failure fails the (non-blocking) job in the last step.
       - name: Verify artifact store round trip
         id: roundtrip
         if: ${{ always() && contains(fromJSON('["push","schedule","release","workflow_dispatch"]'), github.event_name) }}
@@ -475,7 +507,7 @@ jobs:
                   stream.write(line + "\n")
 
           def fail(reason):
-              print("::warning::artstore round trip FAILED: %s" % reason, flush=True)
+              print("::error::artstore round trip FAILED: %s" % reason, flush=True)
               summary("artstore round trip FAILED: %s" % reason)
               sys.exit(1)
 
@@ -546,6 +578,13 @@ jobs:
           print(line, flush=True)
           summary(line)
           PY
+      # The refresh, publish and round-trip steps continue on error so the cache is still saved and the rest
+      # still runs. The job is non-blocking (job-level continue-on-error) but must still show red when one failed.
+      - name: Fail when the refresh, publish or round trip failed
+        if: ${{ always() && (steps.refresh.outcome == 'failure' || steps.stage.outcome == 'failure' || steps.up1.outcome == 'failure' || steps.up2.outcome == 'failure' || steps.up3.outcome == 'failure' || steps.upindex.outcome == 'failure' || steps.roundtrip.outcome == 'failure') }}
+        run: |
+          echo "::error::mods: the archive cache refresh, artifact store publish or round trip failed; see the failed step above."
+          exit 1
 
   # Scheduled and manual only. Blobs whose artifact-store retention ends within 21 days are fetched,
   # sealed again into a new pack with a new index fragment, and then expired or superseded artifacts are
@@ -585,9 +624,12 @@ jobs:
           mkdir -p "$root/blobs" "$root/work"
           : > "$root/list.tsv"
           total=0
+          planned=0
+          failed=0
           cap=8589934592
           while read -r sha; do
             [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || continue
+            planned=$((planned + 1))
             if (( total >= cap )); then
               echo "::notice::Refresh byte cap reached; the next run takes the rest."
               break
@@ -596,7 +638,8 @@ jobs:
               total=$((total + $(stat -c %s "$root/blobs/$sha")))
               printf '%s\t%s\n' "$root/blobs/$sha" "$sha" >> "$root/list.tsv"
             else
-              echo "::warning::Could not fetch blob ${sha:0:12} from the artifact store; skipping it."
+              echo "::error::Could not fetch blob ${sha:0:12} from the artifact store; it is not renewed."
+              failed=$((failed + 1))
             fi
           done < "$RUNNER_TEMP/refresh-plan.txt"
           python3 - "$root/list.tsv" "$root/manifest.json" <<'PY'
@@ -607,6 +650,8 @@ jobs:
               json.dump([{"path": path, "sha256": sha256} for path, sha256 in pairs], stream)
           PY
           echo "count=$(wc -l < "$root/list.tsv")" >> "$GITHUB_OUTPUT"
+          echo "planned=$planned" >> "$GITHUB_OUTPUT"
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
       - name: Stage artifact store packs
         id: stage
         if: ${{ steps.fetch.outputs.count != '0' }}
@@ -618,8 +663,8 @@ jobs:
           set -euo pipefail
           if ! python tools/modsync-ci/artstore.py stage --manifest-json "$RUNNER_TEMP/artstore-refresh/manifest.json" \
               --packdir "$RUNNER_TEMP/artstore-pack" --pack-budget 3221225472 > "$RUNNER_TEMP/artstore-stage.json"; then
-            echo "::warning::Artifact store staging failed; nothing was refreshed this run."
-            exit 0
+            echo "::error::Artifact store staging failed; nothing was refreshed this run."
+            exit 1
           fi
           python3 - "$RUNNER_TEMP/artstore-stage.json" >> "$GITHUB_OUTPUT" <<'PY'
           import json, os, sys
@@ -668,9 +713,16 @@ jobs:
           name: ${{ steps.stage.outputs.index }}
           directory: ${{ runner.temp }}/artstore-pack/index
           if-exists: skip
-      - name: Report artifact store publish problems
-        if: ${{ steps.stage.outcome == 'failure' || steps.up1.outcome == 'failure' || steps.up2.outcome == 'failure' || steps.up3.outcome == 'failure' || steps.upindex.outcome == 'failure' }}
-        run: echo "::warning::Artifact store refresh upload failed; expiring blobs were not renewed this run."
+      # Staging and uploads continue on error only so the prune below still runs; the job itself fails here,
+      # because a refresh that renewed nothing it planned to renew has not done its job.
+      - name: Fail when expiring blobs were not renewed
+        if: ${{ steps.fetch.outputs.failed != '0' || steps.stage.outcome == 'failure' || steps.up1.outcome == 'failure' || steps.up2.outcome == 'failure' || steps.up3.outcome == 'failure' || steps.upindex.outcome == 'failure' || (steps.stage.outputs.index != '' && steps.upindex.outcome != 'success') }}
+        env:
+          FAILED: ${{ steps.fetch.outputs.failed }}
+          PLANNED: ${{ steps.fetch.outputs.planned }}
+        run: |
+          echo "::error::Artifact store refresh incomplete: $FAILED of $PLANNED planned blob(s) could not be fetched, or staging/upload failed; expiring blobs were not all renewed this run."
+          exit 1
       - name: Prune expired and superseded artifacts
         if: ${{ !cancelled() }}
         env:
@@ -818,6 +870,12 @@ jobs:
           if [[ ! -f "$review" ]]; then
             echo "::error::$review is missing. The TypeScript install lanes require a human-reviewed manifest and never pass without one."
             exit 1
+          fi
+          # A delegated manifest is generated with default patcher answers, not reviewed by hand; say so.
+          reviewer=$(jq -r '.reviewer // ""' "$review")
+          if [[ "$reviewer" == delegated* ]]; then
+            echo "::warning title=manifest not hand-reviewed::$review was generated ($reviewer) with default patcher answers; it is not a human review."
+            echo "TypeScript manifest \`$review\` is NOT hand-reviewed: $reviewer" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Resolve ModSync source repository
@@ -1087,10 +1145,9 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=manual lane skipped::$PLAN is missing. The manual reference lane needs a human-reviewed, Wine-executed plan; it is non-gating and skipped without one. A draft is attached as manual-drafts-$GAME."
             {
               echo "### manual ($GAME)"
-              echo "manual lane skipped: no reviewed plan; draft attached (artifact \`manual-drafts-$GAME\`). \`$PLAN\` must be authored and reviewed by a human; this lane never passes a game install without it."
+              echo "manual lane failed: no reviewed plan, nothing installed; draft attached (artifact \`manual-drafts-$GAME\`). \`$PLAN\` must be authored and reviewed by a human; this lane never passes without installing the game."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Draft the manual plan for review
@@ -1104,6 +1161,10 @@ jobs:
           path: ${{ runner.temp }}/drafts
           retention-days: 14
           if-no-files-found: error
+      # Drafted and uploaded first so a human can review it; the lane still fails because it installed nothing.
+      - name: Fail without a reviewed plan
+        if: steps.plan.outputs.present == 'false'
+        run: echo "::error title=manual lane installed nothing::$PLAN is missing. The manual lane needs a human-reviewed, Wine-executed plan; a draft is attached as manual-drafts-$GAME."; exit 1
       - name: Install Wine and tools, free disk space
         if: steps.plan.outputs.present == 'true'
         run: |

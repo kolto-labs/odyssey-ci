@@ -201,7 +201,7 @@ def restore(game, game_dir, environ, download_fn=download, pipeline_fn=run_pipel
             verify_sha256(archive, seed.sha256)
             _say("seed SHA-256 verified")
         else:
-            _say("no GAME_SEED_SHA256 configured; the download was not checked against a digest")
+            _warn("no GAME_SEED_SHA256 configured; the download was not checked against a digest")
         if not zstd_fn():
             _warn("zstd is not available; continuing without the %s seed" % game)
             return False

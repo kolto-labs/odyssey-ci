@@ -59,8 +59,10 @@ not yet been exercised by a CI run.
 
 - **ModSync.rs:** has peer-to-peer transfer through `librqbit`
   (`torrent-seed`, `torrent-download`). The `p2p-loopback` job proves one thing:
-  a seed and a downloader on the same runner move a random 3 MB zip byte for byte,
-  and a download with a wrong `--sha256` is refused with no output file. It does
+  a seed and a downloader on the same runner move a random 3 MB zip byte for byte
+  over the peer connection (the seeder must report uploading the whole file), and a
+  download with a wrong `--sha256` is refused by the hash check after the transfer,
+  with no output file. It does
   not test DHT, trackers, SOCKS5, NAT traversal or any GUI.
 - **ModSync.ts:** has no P2P. The CI lanes build it from `feat/physical-install`
   (`MODSYNC_TS_REF`) and the `cli` lane passes `--ci-physical-install`; the default

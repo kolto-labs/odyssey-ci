@@ -50,7 +50,9 @@ jobs:
       - name: Install Python runtime
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with: {python-version: '3.12'}
-      - name: Prepare full.md lane receipt
+      # `run`, not `prepare`: prepare only clones the baseline and installs nothing, so a green lane would
+      # prove nothing. In manual mode `run` fails on purpose (a human must install), never passes empty.
+      - name: Run the full.md lane
         shell: python
         env:
           CONFIG: ${{ secrets.FULL_BUILD_CONFIG }}
@@ -58,12 +60,9 @@ jobs:
           MODE: ${{ inputs.mode }}
           OUTPUT: ${{ runner.temp }}/modsync-full-build
         run: |
-          import json, os, pathlib, subprocess, sys
-          root = pathlib.Path(os.environ['OUTPUT']); root.mkdir(mode=0o700, parents=True, exist_ok=True)
-          config = json.loads(os.environ['CONFIG'])
-          path = root / 'config.json'; path.write_text(json.dumps(config), encoding='utf-8'); path.chmod(0o600)
-          command = [sys.executable, 'tools/private-ci/src/full_build.py', 'prepare', '--config', str(path), '--game', os.environ['GAME'], '--mode', os.environ['MODE'], '--output', str(root)]
-          completed = subprocess.run(command, text=True)
+          import os, subprocess, sys
+          command = [sys.executable, 'tools/private-ci/src/full_build.py', 'run', '--config-stdin', '--game', os.environ['GAME'], '--mode', os.environ['MODE'], '--output', os.environ['OUTPUT']]
+          completed = subprocess.run(command, input=os.environ['CONFIG'], text=True)
           if completed.returncode:
               sys.exit(completed.returncode)
       - name: Upload encrypted receipt only
@@ -72,5 +71,6 @@ jobs:
         with:
           name: full-build-receipt-${{ inputs.game }}-${{ inputs.mode }}-${{ inputs.platform }}-${{ inputs.implementation }}-${{ github.run_id }}
           path: ${{ runner.temp }}/modsync-full-build/*.age
-          if-no-files-found: ignore
+          # A finished lane without its receipt has no evidence; only a failed lane may lack one.
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'ignore' }}
           retention-days: 7
