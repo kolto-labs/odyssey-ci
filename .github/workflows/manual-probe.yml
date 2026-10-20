@@ -6,7 +6,14 @@ name: Manual lane patcher probe
 # Wine/Xvfb into scratch copies of the game and records every screen, window, log and
 # changed file. Read-only: it restores caches but never saves one, and uploads only
 # the probe output (mod metadata, screenshots and logs; no game files).
+# workflow_dispatch only works once this file is on the default branch; until then a push
+# to a branch that changes the probe runs it for both games.
 on:
+  push:
+    branches-ignore: [dev, main]
+    paths:
+      - .github/workflows/manual-probe.yml
+      - tools/modsync-ci/manual_probe2.py
   workflow_dispatch:
     inputs:
       game:
@@ -24,16 +31,20 @@ permissions:
   actions: read
 
 concurrency:
-  group: manual-probe-${{ inputs.game }}-${{ github.ref }}
+  group: manual-probe-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   probe:
-    name: probe (${{ inputs.game }})
+    name: probe (${{ matrix.game }})
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        game: ${{ fromJSON(inputs.game && format('["{0}"]', inputs.game) || '["k1","k2"]') }}
     env:
-      GAME: ${{ inputs.game }}
+      GAME: ${{ matrix.game }}
       WINEPREFIX: /home/runner/.wine-modsync
       WINEDEBUG: '-all'
       WINEDLLOVERRIDES: 'mscoree,mshtml='
@@ -53,8 +64,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/sealed/*.seal
-          key: game-${{ inputs.game }}-v1
-          restore-keys: steam-sealed-v3-excludingmovies-${{ inputs.game }}-Linux-
+          key: game-${{ matrix.game }}-v1
+          restore-keys: steam-sealed-v3-excludingmovies-${{ matrix.game }}-Linux-
       - name: Look up game backup artifact
         id: game_backup
         if: steps.game_cache.outputs.cache-matched-key == ''
@@ -131,7 +142,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: manual-probe-${{ inputs.game }}
+          name: manual-probe-${{ matrix.game }}
           path: ${{ runner.temp }}/probe-out
           retention-days: 14
           if-no-files-found: ignore
