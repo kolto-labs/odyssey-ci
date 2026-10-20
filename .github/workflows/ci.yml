@@ -6,7 +6,7 @@ name: CI
 # any source (cache, P2P, the optional R2 bucket, the website) or finish its install.
 on:
   push:
-    branches: [dev]
+    branches: [main]
     paths-ignore: ['docs/**', 'meta.json', 'README.md']
   pull_request:
   release:
@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       seed_archives:
-        description: Seed the archive cache from the staging remote (dev only; skips every other job)
+        description: Seed the archive cache from the staging remote (main only; skips every other job)
         type: boolean
         default: false
       seed_dry_run:
@@ -28,7 +28,7 @@ permissions:
   contents: read
 
 env:
-  # Only push (dev only), schedule and manual dispatch write the large Actions caches. Pull requests and
+  # Only push (main only), schedule and manual dispatch write the large Actions caches. Pull requests and
   # releases only restore, so a 3 GB game or archive entry is not duplicated per ref and the 10 GB cap holds.
   CACHE_WRITER: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   # ModSync.ts ref the typescript install lanes build. Physical install
@@ -42,8 +42,11 @@ env:
   # dev-dependency, bump NSSCOMP_REV (with the Rust lanes' lock) and drop the patch.
   NSSCOMP_REV: 00c53a9
 
+# Push, schedule, release and dispatch runs share one group, so two full CI runs never overlap
+# (a newer queued run replaces an older queued one; a running one is never cancelled). Pull
+# requests queue per PR and a newer commit cancels the older run of the same PR.
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.ref) || 'ci-full' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -1014,7 +1017,7 @@ jobs:
         run: python tools/modsync-ci/game_backup.py fetch --game "$GAME" --artifact-id "$ARTIFACT_ID" --seal-dir "$RUNNER_TEMP/sealed"
       - name: Require the game
         if: steps.game_cache.outputs.cache-matched-key == '' && steps.game_artifact.outputs.restored != 'true'
-        run: echo "::error::$GAME has no game cache on this ref and no usable game-$GAME-sealed backup artifact; run the game job from dev or a manual dispatch to save it (docs/ci.md, Actions cache size and eviction)"; exit 1
+        run: echo "::error::$GAME has no game cache on this ref and no usable game-$GAME-sealed backup artifact; run the game job from main or a manual dispatch to save it (docs/ci.md, Actions cache size and eviction)"; exit 1
       - name: Explain a game cache miss
         if: failure() && steps.game_cache.outcome == 'failure'
         run: echo "::error::game cache evicted — re-run the game job (then this lane); see docs/ci.md, Actions cache size and eviction"
@@ -1210,7 +1213,7 @@ jobs:
         run: python tools/modsync-ci/game_backup.py fetch --game "$GAME" --artifact-id "$ARTIFACT_ID" --seal-dir "$RUNNER_TEMP/sealed"
       - name: Require the game
         if: steps.game_cache.outputs.cache-matched-key == '' && steps.game_artifact.outputs.restored != 'true'
-        run: echo "::error::$GAME has no game cache on this ref and no usable game-$GAME-sealed backup artifact; run the game job from dev or a manual dispatch to save it (docs/ci.md, Actions cache size and eviction)"; exit 1
+        run: echo "::error::$GAME has no game cache on this ref and no usable game-$GAME-sealed backup artifact; run the game job from main or a manual dispatch to save it (docs/ci.md, Actions cache size and eviction)"; exit 1
       - name: Explain a game cache miss
         if: failure() && steps.game_cache.outcome == 'failure'
         run: echo "::error::game cache evicted — re-run the game job (then this lane); see docs/ci.md, Actions cache size and eviction"

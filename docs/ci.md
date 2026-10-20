@@ -9,16 +9,22 @@ install fails.
 
 ## Triggers
 
-- Push to `dev`, unless the push only changes `docs/`, `meta.json` or `README.md`.
+- Push to `main`, unless the push only changes `docs/`, `meta.json` or `README.md`.
 - Pull requests from this repository. Forks and Dependabot get no secrets, so every
   job is skipped for them.
 - A published release.
 - Monday and Thursday, 04:23 UTC.
 - Manual dispatch.
 
-A new push to a pull request cancels its previous run. Other runs are not cancelled.
+A new push to a pull request cancels its previous run. Push, schedule, release and
+dispatch runs share one concurrency group (`ci-full`), so two of them never run at the
+same time: a new one waits for the running one, and a newer queued run replaces an
+older queued one. Running runs are never cancelled.
 
-Only `dev` pushes, the schedule and manual dispatch save to the Actions cache; pull
+This repository is private, so hosted-runner minutes count against the account's
+plan; see [Private CI setup](private-ci-setup.md).
+
+Only `main` pushes, the schedule and manual dispatch save to the Actions cache; pull
 requests and releases only restore (see [Actions cache size and eviction](#actions-cache-size-and-eviction)).
 
 ## Jobs
@@ -50,7 +56,7 @@ or `modules/` holds no `.rim` file, at the end, the job fails (it prints a game 
 first). A cache hit with no backup, or one that expires within 14 days, restores the cache
 and uploads the backup (90 days); a fresh seed or SteamCMD result uploads it too. The backup is the
 `CACHE_ENCRYPTION_KEY` seal cut into sealed parts of at most 2000 MiB (artstore envelope, so
-the public artifact holds no game data in the clear) plus `manifest.json`. A backup that
+the artifact holds no game data in the clear) plus `manifest.json`. A backup that
 was needed but could not be staged or uploaded fails the job in its last step (after the
 cache is saved); the install lanes still run, because they only need `game` not to be
 skipped. Runs k1, then k2, on one Steam account. The Monday/Thursday schedule keeps
@@ -367,24 +373,24 @@ is skipped and the Actions cache, P2P and the websites still supply every archiv
 
 The repository's Actions cache is limited to 10 GB and GitHub evicts the least
 recently used entries first (and any entry not used for 7 days). Entries are scoped
-per ref: the same key saved from `refs/heads/dev`, a pull request merge ref and a
+per ref: the same key saved from `refs/heads/main`, a pull request merge ref and a
 feature branch is stored once for each, so a ~3 GB game entry would be stored three
 times.
 
 **One writer.** `ci.yml` sets `CACHE_WRITER` to true only for `push` (the workflow
-triggers only on `dev`), `schedule` and `workflow_dispatch`. Only then do `game` (game
+triggers only on `main`), `schedule` and `workflow_dispatch`. Only then do `game` (game
 cache), `mods` (archive cache and its prune) and the `nsscomp` step save. Pull requests
-and releases only restore: a pull request reads the entries of its base branch `dev`, and
+and releases only restore: a pull request reads the entries of its base branch `main`, and
 `restore-keys` fall back to the newest `mod-archives-*` entry. If a pull request run
 finds no game cache, `game` still refills the game from the backup artifact or SteamCMD
 (and keeps the backup artifact current) but does not save a cache entry; `install` and
 `manual` then restore the sealed game from the `game-<game>-sealed` backup artifact
 instead of failing on a cache miss, and fail with a clear error only when no artifact
 exists either. On `CACHE_WRITER` runs `fail-on-cache-miss` stays on, so an evicted entry
-still fails the lane. To seed the caches before `dev` has them, dispatch the workflow on
+still fails the lane. To seed the caches before `main` has them, dispatch the workflow on
 the branch: that run saves under the branch ref and its own lanes read it, but a pull
-request merge ref cannot read a branch ref's entries, so merge to `dev` (or dispatch on
-`dev`) for pull requests to benefit. The next writer run's prune deletes older
+request merge ref cannot read a branch ref's entries, so merge to `main` (or dispatch on
+`main`) for pull requests to benefit. The next writer run's prune deletes older
 `mod-archives-*` entries on every ref.
 
 The mod archives
@@ -473,7 +479,7 @@ the cache prune then:
 3. `Upload artifact store index` uploads the index fragment (named by `index_name`), only
    when at least one pack uploaded.
 
-These steps run only on `push` (to `dev`), `schedule`, `release` and `workflow_dispatch`.
+These steps run only on `push` (to `main`), `schedule`, `release` and `workflow_dispatch`.
 Pull-request runs from this repository may restore from the store but never publish.
 Every publish step has `continue-on-error: true`, so the remaining steps still run, and
 a store problem never fails a lane. It does fail the (non-blocking) `mods` job: a final
@@ -530,6 +536,6 @@ python tools/modsync-ci/artstore.py prune          # dry run; --apply deletes
 ## Running it by hand
 
 ```sh
-gh workflow run ci.yml -R kolto-labs/mod-builds --ref dev
-gh run list -R kolto-labs/mod-builds --workflow ci.yml
+gh workflow run ci.yml -R kolto-labs/odyssey-ci --ref main
+gh run list -R kolto-labs/odyssey-ci --workflow ci.yml
 ```

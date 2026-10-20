@@ -2,11 +2,14 @@ name: Private CI tooling checks
 on:
   workflow_dispatch:
   push:
-    branches: [dev]
+    branches: [main]
     paths:
       - tools/private-ci/**
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   credential-free-tests:
     strategy:

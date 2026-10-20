@@ -1,67 +1,29 @@
-# Mod Builds
+# Odyssey CI
 
-This repository is used for development and support of the [KOTOR Community Mod Builds](https://kotor.neocities.org/modding/mod_builds/).
+Private continuous integration for the KOTOR Community Mod Builds guides. The guide
+content (`content/`, `scripts/`, `meta.json`) is a copy of the public guides and is
+the input the tools in `tools/` verify; it is not published from here.
 
-If you are looking to install mods, <ins>**PLEASE FOLLOW THE INSTRUCTIONS ON THE WEBSITE**</ins>. This repository often contains content which is still under active development and untested.
+If you are looking to install mods, <ins>**PLEASE FOLLOW THE INSTRUCTIONS ON THE
+[WEBSITE](https://kotor.neocities.org/modding/mod_builds/)**</ins>.
 
-## Private installer verification
+## Where things are
 
-This fork includes six CLI/native GUI workflows for verifying the public guides
-with private installer implementations. See [setup and privacy boundaries](tools/private-ci/README.md).
-Game originals are never public workflow artifacts.
+- `.github/workflows/ci.yml` — game acquisition, the mod archive cache and every
+  install lane. See [docs/ci.md](docs/ci.md).
+- `.github/workflows/manual-probe.yml` — patcher probes for the reviewed manual plans
+  in `ci/`.
+- `.github/workflows/full-build-*.yml` — the private full-build lanes; see
+  [tools/private-ci/README.md](tools/private-ci/README.md).
+- `.github/workflows/artifact-cache-*.yml`, `private-ci-toolkit.yml` — the encrypted
+  artifact cache and credential-free checks of the private tooling.
 
-## Branch Strategy
+## Branches
 
-This repository uses a [Gitflow](https://www.atlassian.com/git/tutorials/comparing-workflows/gitflow-workflow) branch strategy.
+`main` is the default branch. Pushes to `main`, the schedule and manual dispatch write
+the Actions caches; pull requests only read them.
 
-- The `main` branch contains the latest stable version.
-- The `dev` branch contains ongoing development.
-- A `release/` branch contains a snapshot of work at the time of release.
+## Setup
 
-## Release
-
-This repository contains a [Release workflow](https://github.com/KOTOR-Community-Portal/mod-builds/actions/workflows/release.yml) to automate the release process.
-
-1. Navigate to the `Release` workflow by clicking the link above or by going to the `Actions` tab and selecting `Release` in the sidebar.
-
-> [!NOTE]
-> If you made changes in other repositories, you will also need to run the `Release` workflow in each repository you changed 
-(e.g. [website](https://github.com/KOTOR-Community-Portal/website/actions/workflows/release.yml) or [website-content](https://github.com/KOTOR-Community-Portal/website-content/actions/workflows/release.yml)). You can find them by going to the `Actions` tab of the respective repository and selecting `Release` in the sidebar.
-
-<img width="500" height="430" alt="Navigating to the 'Release' workflow" src="https://github.com/user-attachments/assets/8f0801f8-b76c-46ad-b0d8-c3afddc7b6ff" />
-
-2. Click to expand the `Run workflow` dropdown menu.
-
-<img width="500" height="215" alt="Expanding the 'Run workflow' dropdown menu" src="https://github.com/user-attachments/assets/a5536872-d546-4821-89b8-0310dc46b7e0" />
-
-4. Choose from the `version-type` dropdown menu to specify what type of version to release. This repository follows [Semantic Versioning](https://semver.org/) (SemVer) to indicate to the user broadly what was changed in a new version.
-    - `patch`: Fixes such as corrected typos, adjusted verbiage, and revised instructions when mods are updated. 
-    - `minor`: New functionality such as the addition of a new mod which is backward compatible or improvements to the user interface.
-    - `major`: Significant changes which are not guaranteed to be backward compatible such as the addition and removal of several mods.
-
-   Do not change any other settings.
-
-<img width="300" height="262" alt="Choosing from the 'version-type' dropdown menu" src="https://github.com/user-attachments/assets/5e2240f6-767d-4743-857f-63802a4cc704" />
-
-5. Click the `Run workflow` button to kick off the workflow.
-<img width="300" height="262" alt="Clicking the 'Run workflow' button" src="https://github.com/user-attachments/assets/2c2de6d9-333a-44c6-87a6-353c63093424" />
-
-The workflow will begin running and after some time, the page will update with the status of the workflow run. If it finishes successfully, you can proceed to deploying. If there is an error, GitHub will display a log of what went wrong, but you may need to seek help from a developer to resolve the issue.
-
-## Deploy
-
-In order for changes to this repository to be viewble on the KOTOR Community Portal website, the content on GitHub must deployed to the website on Neocities. The `kotor-community-portal.github.io` repository contains a [Deploy](https://github.com/KOTOR-Community-Portal/kotor-community-portal.github.io/actions/workflows/deploy.yml) to automate the deployment process. The workflow deploys content from all of the KOTOR Community Portal organization's repositories, including `mod-builds`.
-
-1. Navigate to the `Deploy` workflow by clicking on the link above or by going to `Actions` tab of the `kotor-community-portal.github.io` repository and selecting `Deploy` in the sidebar.
-
-2. Click to expand the `Run workflow` dropdown menu.
-
-<img width="300" height="262" alt="Expanding the 'Run workflow' dropdown menu" src="https://github.com/user-attachments/assets/3d2b2038-ebda-4b4a-a71a-28371abd325f" />
-
-3. Do not change any settings.
-
-4. Click the `Run workflow` button to kick off the workflow.
-
-<img width="300" height="262" alt="Clicking the 'Run workflow' button" src="https://github.com/user-attachments/assets/0af4ff13-f5e0-4fb9-a339-2924e2c07c2f" />
-
-The workflow will begin running and after some time, the page will update with the status of the workflow run. If it finishes successfully, the new content for the mod builds will be live on the KOTOR Community Portal website. See the [Deploy section](https://github.com/KOTOR-Community-Portal/website?tab=readme-ov-file#deploy) of the `website` repository's readme for more information.
+Secrets, variables, enabling Actions, minute limits and self-hosted runners are
+described in [docs/private-ci-setup.md](docs/private-ci-setup.md).

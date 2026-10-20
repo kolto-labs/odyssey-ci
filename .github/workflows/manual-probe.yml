@@ -13,7 +13,7 @@ name: Manual lane patcher probe
 # to a branch that changes the probe or the plans runs it for both games.
 on:
   push:
-    branches-ignore: [dev, main]
+    branches-ignore: [main]
     paths:
       - .github/workflows/manual-probe.yml
       - tools/modsync-ci/probe_plan.py

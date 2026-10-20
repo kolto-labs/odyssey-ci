@@ -19,6 +19,10 @@ on:
         default: hosted
 permissions:
   contents: read
+# One run of this lane at a time; a newer dispatch waits instead of competing for the runner.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 jobs:
   full-build:
     strategy:

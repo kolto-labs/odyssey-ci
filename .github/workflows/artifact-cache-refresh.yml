@@ -23,7 +23,7 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           import json, os, sys
-          if os.environ['REPOSITORY'] != 'kolto-labs/mod-builds' or os.environ['EVENT'] not in ('schedule', 'workflow_dispatch'):
+          if os.environ['REPOSITORY'] != 'kolto-labs/odyssey-ci' or os.environ['EVENT'] not in ('schedule', 'workflow_dispatch'):
               sys.exit('Artifact cache execution is restricted to the owner repository.')
           try:
               config = json.loads(os.environ['CONFIG'])

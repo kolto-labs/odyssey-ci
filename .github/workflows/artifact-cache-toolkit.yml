@@ -1,7 +1,7 @@
 name: Artifact cache toolkit checks
 on:
   push:
-    branches: [dev]
+    branches: [main]
     paths:
       - tools/private-ci/src/artifact_store.py
       - tools/private-ci/tests/test_artifact_store.py
@@ -9,6 +9,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   tests:
     runs-on: ubuntu-latest

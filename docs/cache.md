@@ -521,13 +521,13 @@ Consequences of `pinned`:
    and writes nothing to the cache:
 
    ```sh
-   gh workflow run ci.yml -R kolto-labs/mod-builds --ref <branch> -f seed_archives=true -f seed_dry_run=true
+   gh workflow run ci.yml -R kolto-labs/odyssey-ci --ref <branch> -f seed_archives=true -f seed_dry_run=true
    ```
 
 4. Then seed for real:
 
    ```sh
-   gh workflow run ci.yml -R kolto-labs/mod-builds --ref <branch> -f seed_archives=true -f seed_dry_run=false
+   gh workflow run ci.yml -R kolto-labs/odyssey-ci --ref <branch> -f seed_archives=true -f seed_dry_run=false
    ```
 
 `<branch>` must contain the workflow with these inputs. With `seed_archives=true`

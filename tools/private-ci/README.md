@@ -1,5 +1,10 @@
 # Private installer verification for public mod-build guides
 
+> This copy lives in the private repository `kolto-labs/odyssey-ci`. Statements below
+> about public runners, free hosted minutes and public logs describe the original public
+> setup. Here logs, artifacts and caches are private and hosted minutes are billed
+> against the plan; see [Private CI setup](../../docs/private-ci-setup.md).
+
 This repository's public K1/TSL guides are the subject of these jobs. The private
 ModSync implementations are the tools used to verify them. This is a companion
 pipeline for an associated project, not a general-purpose free compute relay.

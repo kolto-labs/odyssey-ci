@@ -8,10 +8,11 @@ read with `gh cache list` on the same day.
 
 Everything runs from one workflow, `.github/workflows/ci.yml`; see [ci.md](ci.md).
 
-- **Triggers:** push to `dev`, pull requests (same-repository only; fork and
+- **Triggers:** push to `main`, pull requests (same-repository only; fork and
   Dependabot pull requests skip every job that needs secrets), published releases,
   a Monday and Thursday schedule (`23 4 * * 1,4`) and `workflow_dispatch`. A newer
-  push to a pull request cancels its older run; other runs are not cancelled.
+  push to a pull request cancels its older run; the other events share one
+  concurrency group, so two full runs never overlap and none is cancelled while running.
 - **`game` (k1, k2; one at a time):** look up the encrypted game cache, or
   download with SteamCMD (saved login if `STEAM_CONFIG_VDF` is set, then password,
   then `STEAM_RECOVERY_CODE`, then `STEAM_GUARD_CODES`; stops at Steam's rate limit) and save it. Fails only if the game is still missing.

@@ -96,8 +96,8 @@ SteamCMD result: inventory with `--require-modules`, `pack`, cache save and back
 
 The Actions cache can be evicted and K1 cannot be re-fetched without a human (SteamCMD
 waits for a Steam Guard confirmation in the mobile app), so `game` also keeps the sealed
-game as the Actions artifact `game-<game>-sealed`. The repository is public and anyone
-can download artifacts, so only encrypted data is uploaded: the `baseline.seal` that
+game as the Actions artifact `game-<game>-sealed`. Anyone with read access to the
+repository can download artifacts, so only encrypted data is uploaded: the `baseline.seal` that
 `game_cache.py pack` writes (AES-256-CBC with an HMAC, key `CACHE_ENCRYPTION_KEY`) is cut by
 `tools/modsync-ci/game_backup.py` into parts of at most 2000 MiB, each sealed again with the
 artstore part envelope (same key), next to a `manifest.json` that holds the SHA-256 and
@@ -244,7 +244,7 @@ don't use it unless that is the file SteamCMD just updated.
 Then send it straight to GitHub without displaying it:
 
 ```sh
-base64 -w0 ~/Steam/config/config.vdf | gh secret set STEAM_CONFIG_VDF -R kolto-labs/mod-builds
+base64 -w0 ~/Steam/config/config.vdf | gh secret set STEAM_CONFIG_VDF -R kolto-labs/odyssey-ci
 ```
 
 The file is a login credential for your account. Keep it out of the repository,
@@ -265,7 +265,7 @@ If the saved config (`STEAM_CONFIG_VDF`) and the password sign-in both fail, the
 Get the backup codes from Steam → Account details → Manage Steam Guard → Get backup codes. Set the secret from your own terminal so the value never shows up in a log:
 
 ```sh
-gh secret set STEAM_GUARD_CODES -R kolto-labs/mod-builds    # paste the codes separated by spaces, then Ctrl-D
+gh secret set STEAM_GUARD_CODES -R kolto-labs/odyssey-ci    # paste the codes separated by spaces, then Ctrl-D
 
 ```
 
