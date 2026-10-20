@@ -88,27 +88,28 @@ install and manual lane, because no source can supply the archive.
 
 ## Rust lane gaps
 
-- 69 K1 components had no `Instructions` when last measured, and `ports.py` stops
-  the Rust lane on that (`guide_steps_without_instructions`).
+- 69 K1 components had no `Instructions` when last measured. `ports.py` deselects
+  each of them and its dependents as an error, installs the rest of the guide, and then
+  fails the Rust lane (status `incomplete`).
 - Generated draft instructions need a human review with notes. `gui_rust.py`
   cannot authorize one and stops (a deselected draft component is not installed and
   does not stop it).
-- Until that review happens, the components whose drafts the verified-draft review leaves
-  unreviewed are deselected from the Rust install lanes as visible, committed reviewed
-  policy skips (owner decision 2026-10-18; CI run 39136954201): k1 150, k2 118 plus the
-  dependent `Extended Korriban Arrival`. This is omission, not approval: the drafts stay
-  unreviewed, the lane report lists them under `deselected_pending_review` and the CI
-  log prints the count and names, and a new unreviewed draft still blocks. The rest of
-  each guide (k1 46 of 197 components, k2 30 of 151, after the `4GB Patcher` and
-  `K2 Cutscenes Rescaled` skips) is what these lanes now install, so a green Rust install lane is a
-  partial-guide result, not guide parity (the TypeScript lanes do not omit those drafts). Not yet confirmed against the CI-built Rust
-  binary; see [ports.md](ports.md#components-deselected-pending-human-review).
+- The committed `unreviewed_draft` lane skips (k1 150, k2 118 plus the dependent
+  `Extended Korriban Arrival`; owner decision 2026-10-18) are removed: they made the k2
+  Rust CLI lane of CI run 39425722697 install a fraction of the guide and fail. The Rust
+  lanes now accept every generated draft with clean diagnostics (`convert --review-draft`)
+  and let `validate`/`install` check it; a draft that cannot be accepted is deselected as
+  an error with its dependents and fails the lane after the rest is installed. Only an
+  archive no source can provide (or the reviewed uncached-by-policy steps) is a warning,
+  and a lane missing only those passes as `partial`. Unit-tested with fake tool output
+  only; not yet run against the CI-built Rust binary; see
+  [ports.md](ports.md#generated-draft-acceptance).
 - Rust `validate` failures that name a component (`Error: <Component> / step N (...)`, as
   `Ebon Hawk Downloadable Map` did in k2 CLI/GUI run 39141977764) are quarantined at run
   time: the component and its dependents are deselected and `validate` re-runs, at most 15
   times and never more than 15% of the selected components. Every quarantined component is
-  in the lane report (`quarantined_validate_failures`) and a `::warning::` line, so a green
-  Rust lane may be a partial install. Errors that name no component, caps, a missing game
+  in the lane report (`quarantined_validate_failures`) and an `::error::` line, and the
+  lane fails (`incomplete`) once the rest is installed. Errors that name no component, caps, a missing game
   and install-time failures (K1 `Helena Shan Improvement`, which needs a restored game
   before a retry) still fail the lane; failures now print a bounded evidence excerpt and
   record the failing component as `failure`. Unit-tested with fake tool output only; not yet

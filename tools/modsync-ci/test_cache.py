@@ -440,5 +440,64 @@ class HostBreakerTests(sources.Fixture):
         self.assertFalse(cache.network_failure(ValueError("truncated archive")))
 
 
+class DeselectUnavailableTests(sources.Fixture):
+    GUIDE = ("# Guide\n\n## Mod List\n\n### Pack A\n\n[mod](%s)\n\n### Pack A Patch\n\n"
+             "Needs [the pack](%s).\n" % (sources.URL, sources.URL))
+
+    def setUp(self):
+        super().setUp()
+        self.guide.write_text(self.GUIDE, encoding="utf-8")
+
+    def restore(self, error, *extra):
+        def fail(url, args, headers=None):
+            raise ValueError(error)
+
+        with mock.patch.object(cache, "request", fail), mock.patch.object(cache, "warn") as warn:
+            code, report = self.run_main("restore", "--no-artstore", *extra)
+        return code, report, [call.args[0] for call in warn.call_args_list]
+
+    def test_without_the_flag_a_missing_archive_fails_the_restore(self):
+        code, report, _ = self.restore("HTTP 404")
+        self.assertNotEqual(code, 0)
+        self.assertIs(report["ok"], False)
+        self.assertEqual(report["entries"][0]["status"], "unresolved")
+        self.assertNotIn("unavailable_steps", report)
+
+    def test_a_missing_archive_lists_every_step_that_references_it_and_passes_with_a_warning(self):
+        code, report, warnings = self.restore("HTTP 404", "--deselect-unavailable")
+        self.assertEqual(code, 0, report)
+        self.assertIs(report["ok"], True)
+        entry, = report["entries"]
+        self.assertEqual(entry["status"], "unavailable")
+        steps = [{"guide": str(self.guide), "section": "Mod List", "heading": heading}
+                 for heading in ("Pack A", "Pack A Patch")]
+        self.assertEqual(entry["unavailable_steps"], steps)
+        self.assertEqual(report["unavailable_steps"],
+                         [{**step, "url": sources.URL, "reason": entry["reason"]} for step in steps])
+        self.assertIn("HTTP 404", entry["reason"])
+        self.assertTrue(any("archive unavailable" in line and "'Pack A Patch'" in line for line in warnings),
+                        warnings)
+
+    def test_a_link_outside_any_step_still_fails(self):
+        self.guide.write_text("# Guide\n\n## Mod List\n\n[mod](%s)\n" % sources.URL, encoding="utf-8")
+        code, report, _ = self.restore("HTTP 404", "--deselect-unavailable")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(report["entries"][0]["status"], "unresolved")
+        self.assertNotIn("unavailable_steps", report)
+
+    def test_a_download_that_needs_a_reviewed_selection_still_fails(self):
+        code, report, _ = self.restore(
+            "landing page lists multiple files and no reviewed selection exists for file 1; "
+            "add an exact file name to archive_selections.json; candidates: a.zip, b.zip",
+            "--deselect-unavailable")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(report["entries"][0]["status"], "unresolved")
+        self.assertNotIn("unavailable_steps", report)
+
+    def test_the_flag_is_restore_only(self):
+        with self.assertRaises(SystemExit):
+            self.run_main("refresh", "--deselect-unavailable")
+
+
 if __name__ == "__main__":
     unittest.main()

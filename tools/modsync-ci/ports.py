@@ -756,11 +756,11 @@ def record_bind_diagnostics(private, report, names=None):
                             "kind": bind_diagnostic_kind(reason), "reason": reason})
     report[BIND_DIAGNOSTICS_KEY] = entries
     for entry in entries[:BIND_DIAGNOSTIC_PRINT_CAP]:
-        print(f"::warning::ports: {entry['stage']}: {entry['component'] or 'unnamed component'} "
+        print(f"::error::ports: {entry['stage']}: {entry['component'] or 'unnamed component'} "
               f"[{entry['component_guid'] or 'no guid'}]: {entry['reason'][:600]}",
               file=sys.stderr, flush=True)
     if len(entries) > BIND_DIAGNOSTIC_PRINT_CAP:
-        print(f"::warning::ports: {len(entries) - BIND_DIAGNOSTIC_PRINT_CAP} more bind diagnostics "
+        print(f"::error::ports: {len(entries) - BIND_DIAGNOSTIC_PRINT_CAP} more bind diagnostics "
               f"are in the report under {BIND_DIAGNOSTICS_KEY}", file=sys.stderr, flush=True)
 
 
@@ -1268,14 +1268,15 @@ def draft_pending(component):
     return isinstance(warning, str) and REVIEW_FLAG in warning
 
 
-def pending_drafts(converted, exempt_guids, gui):
+def pending_drafts(converted, exempt_guids, gui, owners=False):
     """Selected components (and what they install) that still have an unreviewed draft.
 
     exempt_guids are reviewed-policy skips and GUI widescreen exclusions: they are
     never installed, so their drafts do not matter. The GUI lane installs every other
     component and refuses any nested draft; the CLI lane installs components with
     IsSelected = true (all, when none is selected, as the Rust loader does) and only
-    their selected options.
+    their selected options. With `owners`, each item also names its top-level component
+    (`owner_guid`), the only level `convert --review-draft` can accept.
     """
     document = tomllib.loads(converted.read_text(encoding="utf-8"))
     components = [component for component in document.get("thisMod", document.get("Components", []))
@@ -1283,23 +1284,118 @@ def pending_drafts(converted, exempt_guids, gui):
     default_selected = not any(component.get("IsSelected") is True for component in components)
     pending = []
 
-    def walk(component, owner):
+    def walk(component, owner, top):
         heading = component.get("Heading", component.get("Name"))
         if owner is not None:
             heading = f"{owner} / {heading}"
         if draft_pending(component):
             pending.append({"component_guid": str(component.get("Guid", "")).lower(),
                             "heading": heading})
+            if owners:
+                pending[-1]["owner_guid"] = top
         for option in component.get("Options", []):
             if isinstance(option, dict) and (gui or option.get("IsSelected") is True):
-                walk(option, heading)
+                walk(option, heading, top)
 
     for component in components:
-        if str(component.get("Guid", "")).lower() in exempt_guids:
+        identity = str(component.get("Guid", "")).lower()
+        if identity in exempt_guids:
             continue
         if gui or default_selected or component.get("IsSelected") is True:
-            walk(component, None)
+            walk(component, None, identity)
     return pending
+
+
+DRAFT_ACCEPT_STAGE = "accept_drafts"
+DRAFT_ACCEPTANCE_KEY = "draft_acceptance"
+
+
+def draft_refusal(component):
+    """Why `convert --review-draft` cannot accept this top-level draft, or None when it can.
+
+    Mirrors the Rust mark_reviewed: it needs a generated DraftReview record whose diagnostics
+    belong to the component and list no unparsed gaps, conditional drafts or rejected drafts.
+    A draft with a saved Resolution needs a new explicit resolution, so it is refused too.
+    """
+    review = component.get("DraftReview")
+    if not isinstance(review, dict):
+        return "prose draft without a generated draft review record"
+    if "Resolution" in review:
+        return "draft carries a saved resolution that no longer matches; it needs a new explicit resolution"
+    result = review.get("Result")
+    if not isinstance(result, dict) or str(result.get("ComponentGuid", "")).lower() != str(
+            component.get("Guid", "")).lower():
+        return "draft diagnostics are missing or belong to another component"
+    problems = []
+    for key, label in (("UnparsedGaps", "unparsed gap(s)"), ("ConditionalDrafts", "conditional draft(s)")):
+        items = result.get(key) or []
+        if items:
+            problems.append(f"{len(items)} {label}: " + "; ".join(str(item)[:200] for item in items[:3]))
+    if result.get("RejectedDrafts"):
+        problems.append(f"{result['RejectedDrafts']} rejected draft instruction(s)")
+    return "; ".join(problems) or None
+
+
+def accept_drafts(command, source, converted, private, report, env, exempt, gui):
+    """Accept every generated draft the converter can accept, and deselect the rest as errors.
+
+    The converter fences instructions it drafted from the guide's prose until they are reviewed.
+    The lane installs the guide as generated: each selected top-level component whose draft
+    diagnostics are clean is accepted with `convert --review-draft` (validate and install then
+    check it against the real archives and game). A draft that cannot be accepted (gaps,
+    conditional or rejected drafts, an option-level draft, or one still fenced afterwards) is a
+    generation failure: the component and its dependents are deselected as errors, so the rest
+    installs and the lane fails. Returns the GUIDs deselected here.
+    """
+    components = converted_components(converted)
+    by_guid = {normalized_reference(component.get("Guid")): component for component in components}
+    grouped = {}
+    for item in pending_drafts(converted, exempt, gui, owners=True):
+        grouped.setdefault(item["owner_guid"], []).append(item)
+    records = report.setdefault(SKIPPED_REPORT_KEY, [])
+    start = len(records)
+
+    def refuse(owner, reason):
+        component = by_guid[normalized_reference(owner)]
+        refused[owner] = reason
+        records.append({"status": NOT_INSTALLED, "severity": SEVERITY_ERROR, "section": None,
+                        "heading": component.get("Heading", component.get("Name")),
+                        "reason": "generated draft not installable: " + reason, "urls": [],
+                        "source": DRAFT_REFUSED_SOURCE, "component_guid": normalized_reference(owner)})
+
+    refused = {}
+    for owner, items in grouped.items():
+        nested = [item["heading"] for item in items if item["component_guid"] != owner]
+        problem = (("option draft(s) cannot be accepted per component: " + ", ".join(nested))
+                   if nested else draft_refusal(by_guid[normalized_reference(owner)]))
+        if problem:
+            refuse(owner, problem)
+    # Dependents of a refused draft are not installed, so their drafts are not accepted either.
+    cascade_dependents(components, records, start)
+    deselected = {record["component_guid"] for record in records[start:]}
+    accepted = [owner for owner in grouped if owner not in deselected]
+    if accepted:
+        output = private / "converted-accepted.toml"
+        run(command + ["convert", str(converted), str(output), "--format", "toml"]
+            + [flag for owner in accepted for flag in ("--review-draft", owner)],
+            source, private, DRAFT_ACCEPT_STAGE, report, env)
+        if not output.is_file() or output.is_symlink():
+            raise Blocked("accept_drafts_output_missing")
+        if [normalized_reference(each.get("Guid")) for each in converted_components(output)] != list(by_guid):
+            raise Blocked("accept_drafts_changed_component_order")
+        output.replace(converted)
+        middle = len(records)
+        for item in pending_drafts(converted, exempt, gui, owners=True):
+            if item["owner_guid"] in accepted:
+                accepted.remove(item["owner_guid"])
+                refuse(item["owner_guid"], "still fenced after convert --review-draft")
+        cascade_dependents(components, records, middle)
+        dependents = {record["component_guid"] for record in records[middle:]}
+        accepted = [owner for owner in accepted if owner not in dependents]
+    report[DRAFT_ACCEPTANCE_KEY] = {
+        "accepted": accepted,
+        "refused": [{"component_guid": owner, "reason": reason} for owner, reason in refused.items()]}
+    return {record["component_guid"] for record in records[start:]}
 
 
 def reclassify_policy_skips(report, guids):
@@ -1947,7 +2043,8 @@ def install_with_quarantine(command, directories, deselect, converted, game, sou
     as `install_retry_N`. A retry the engine still refuses as an unfinished install is reported as
     `unfinished_install_not_recovered` together with the original attributed failure. Anything
     else leaves the lane failed. Every quarantined component is
-    listed in report["quarantined_install_failures"]: the lane is a partial install.
+    listed in report["quarantined_install_failures"] and fails the lane (status "incomplete")
+    once the rest is installed.
     """
     typescript = implementation == "typescript"
     components = converted_components(converted)
@@ -2285,9 +2382,10 @@ def install_rust_gui_with_quarantine(command, source, private, game, archives, c
 
             quarantine_failure("install", parsed, stage, components, deselect, game, report, failure,
                                before_commit=restore)
-            print(f"::warning::ports: {stage}: installation stopped at '{parsed['component']}', step "
+            print(f"::error::ports: {stage}: installation stopped at '{parsed['component']}', step "
                   f"{parsed['step']} ({parsed['action']}); the game was restored and the component "
-                  f"is set aside, so the retried install is PARTIAL", file=sys.stderr)
+                  f"is set aside, so the rest is retried and the lane fails once it is installed",
+                  file=sys.stderr)
             attempt += 1
             continue
         report.pop("failure", None)
@@ -2362,7 +2460,8 @@ def install_gui_with_quarantine(command, source, private, game, archives, conver
     (`converted-gui_retry_N.toml`). Any other driver failure (no install failure captured, a
     prompt, a missing game, a failed rollback, a budget cap) is re-raised or recorded in
     report["quarantine"]["stopped"]; nothing is skipped silently. Every quarantined component is
-    listed in report["quarantined_install_failures"]: the lane is a partial install. Returns the
+    listed in report["quarantined_install_failures"] and fails the lane (status "incomplete")
+    once the rest is installed. Returns the
     verified driver report of the attempt that installed.
 
     `choices` is the reviewed manifest's flat `["--choice", "GUID=ANSWER", ...]` list; it is appended
@@ -2488,6 +2587,47 @@ def install_gui_with_quarantine(command, source, private, game, archives, conver
         return result
 
 
+LANE_ERRORS_KEY = "lane_errors"
+OMITTED_KEY = "omitted_components"
+
+
+def lane_errors(report):
+    """What keeps an otherwise finished lane from passing.
+
+    Every component that was not installed for a reason other than an unobtainable archive or a
+    guide-sanctioned skip (error-severity deselections and their dependents, and validate or install
+    quarantines), plus every component the archive binding left unresolved: such a component may
+    still install from its prose draft, but not from a layout the converter resolved.
+    """
+    deselected = [record for record in report.get(SKIPPED_REPORT_KEY) or ()
+                  if record.get("component_guid") and record.get("severity", SEVERITY_ERROR) == SEVERITY_ERROR]
+    quarantined = quarantined_entries(report)
+    excluded = {record["component_guid"] for record in deselected} | {
+        item["component_guid"] for item in quarantined}
+    unresolved = sorted({item["component_guid"] for item in report.get(BIND_DIAGNOSTICS_KEY) or ()
+                         if item.get("component_guid") and item["component_guid"] not in excluded})
+    return {"count": len(excluded) + len(unresolved), "not_installed": len(excluded),
+            "deselected": len(deselected), "quarantined": len(quarantined),
+            "bind_unresolved": len(unresolved), "bind_unresolved_guids": unresolved}
+
+
+def omitted_components(report):
+    """Components left out, with a warning, because their archive is not obtainable.
+
+    Warning-severity deselections from the restore report (cache.py restore: reviewed
+    uncached-by-policy steps and --deselect-unavailable steps) and their dependents. Leaving them
+    out does not fail the lane, but the result is PARTIAL, not a full install: report status
+    "partial" and report["partial"] true, as in manual.py. A warning lane skip (a step the guide
+    itself says not to apply in this setup) is to spec and is not counted.
+    """
+    return [{"component_guid": record["component_guid"], "heading": record["heading"],
+             "source": record["source"], "reason": record["reason"]}
+            for record in report.get(SKIPPED_REPORT_KEY) or ()
+            if record.get("component_guid")
+            and record.get("severity", SEVERITY_ERROR) == SEVERITY_WARNING
+            and record.get("source") in OMISSION_SOURCES]
+
+
 def print_diagnostics(report):
     """Put the skip causes and every uncovered step in the CI log so one read is enough."""
     durations = report.get(STAGE_DURATIONS_KEY)
@@ -2521,32 +2661,28 @@ def print_diagnostics(report):
         suffix = f"; reviewed-policy-skipped={policy}" if policy else ""
         print(f"ports: convert generated instructions for {skips['generated']} of {skips['total']}"
               f" components; not generated: {causes or 'none'}{suffix}", file=sys.stderr)
+    acceptance = report.get(DRAFT_ACCEPTANCE_KEY)
+    if acceptance:
+        print(f"ports: generated drafts accepted for install: {len(acceptance['accepted'])}; "
+              f"not installable: {len(acceptance['refused'])}", file=sys.stderr)
     for record in report.get(SKIPPED_REPORT_KEY) or ():
-        if record.get("bind_diagnostic"):
-            print(f"::warning::ports: OMITTED {record['heading']} [{record['component_guid']}] from this "
-                  f"lane (reviewed lane skip, temporary, so a green lane is a PARTIAL install): "
-                  f"{record['reason']}; converter diagnostic: {record.get('bind_diagnostic_reason')}",
-                  file=sys.stderr)
-        elif record.get("source") == "lane_skips" and not record.get("kind"):
-            print(f"::warning::ports: OMITTED {record['heading']} [{record['component_guid']}] from this "
-                  f"lane (reviewed lane skip, so a green lane is a PARTIAL install): {record['reason']}",
-                  file=sys.stderr)
+        if not record.get("component_guid"):
+            continue
+        detail = record["reason"]
+        if record.get("bind_diagnostic_reason"):
+            detail += f"; converter diagnostic: {record['bind_diagnostic_reason']}"
+        if record.get("severity", SEVERITY_ERROR) == SEVERITY_ERROR:
+            print(f"::error::ports: NOT INSTALLED {record['heading']} [{record['component_guid']}] "
+                  f"({record['source']}): {detail}", file=sys.stderr)
+        else:
+            print(f"::warning::ports: DESELECTED {record['heading']} [{record['component_guid']}] "
+                  f"({record['source']}): {detail}", file=sys.stderr)
     for item in report.get(UNAPPLIED_BIND_SKIPS_KEY) or ():
         outcome = ("the converter now gives it instructions, so it is NOT skipped; remove the entry"
                    if item["state"] == "stale"
                    else "no matching bind diagnostic was recorded, so the coverage gap stands")
         print(f"::warning::ports: lane skip for {item['heading']} [{item['component_guid']}] "
               f"({item['bind_diagnostic']}) not applied: {outcome}", file=sys.stderr)
-    pending = report.get(PENDING_REVIEW_KEY)
-    if pending:
-        print(f"::error::ports: {pending['count']} component(s) DESELECTED pending human review "
-              f"(reviewed policy skips; not installed, not verified): "
-              f"{pending['by_kind']['unreviewed_draft']} unreviewed draft(s), "
-              f"{pending['by_kind']['dependent_of_deselected']} dependent(s) of a deselected component",
-              file=sys.stderr)
-        for item in pending["components"]:
-            print(f"  - deselected pending review: {item['heading']} [{item['component_guid']}] "
-                  f"({item['kind']})", file=sys.stderr)
     for phase, label, outcome in (
             ("validate", "validate failures", "not installed and not verified"),
             ("install", "install failures", "omitted from the retried install and not verified")):
@@ -2555,17 +2691,17 @@ def print_diagnostics(report):
         if not quarantined:
             continue
         failing = [item for item in quarantined if item["kind"] == settings["kind"]]
-        print(f"::warning::ports: {len(quarantined)} component(s) QUARANTINED after {label} "
+        print(f"::error::ports: {len(quarantined)} component(s) QUARANTINED after {label} "
               f"({len(failing)} failing, {len(quarantined) - len(failing)} dependent(s)): they are "
-              f"{outcome}, so a green lane is a PARTIAL install", file=sys.stderr)
+              f"{outcome}; the rest of the guide was installed", file=sys.stderr)
         for item in quarantined:
             if item["kind"] == settings["kind"]:
                 at_step = f" at step {item['step']}" if item["step"] is not None else ""
-                print(f"::warning::ports: quarantined {item['name']} [{item['component_guid']}]: "
+                print(f"::error::ports: quarantined {item['name']} [{item['component_guid']}]: "
                       f"{phase} failed{at_step} ({item['action']}): {item['error_line']}",
                       file=sys.stderr)
             else:
-                print(f"::warning::ports: quarantined {item['name']} [{item['component_guid']}]: "
+                print(f"::error::ports: quarantined {item['name']} [{item['component_guid']}]: "
                       f"depends on quarantined {item['caused_by']}", file=sys.stderr)
     for item in report.get(GUI_INSTALL_FAILURES_KEY) or ():
         print("\n".join(gui_diag.render_install_failure(
@@ -2592,7 +2728,7 @@ def print_diagnostics(report):
                   f"none were quarantined: " + ", ".join(repr(name) for name in stopped["attributed_components"]),
                   file=sys.stderr)
     failure = report.get("failure")
-    if failure and report.get("status") != "installed":
+    if failure and report.get("status") not in PASSING_STATUSES:
         where = failure_location(failure)
         if failure.get("driver_reason"):
             where += f" [driver reason: {failure['driver_reason']}]"
@@ -2617,6 +2753,17 @@ def print_diagnostics(report):
                   f"<{' '.join(step['urls'])}>", file=sys.stderr)
             if step.get("bind_diagnostic"):
                 print(f"    bind diagnostic: {step['bind_diagnostic']}", file=sys.stderr)
+    errors = report.get(LANE_ERRORS_KEY)
+    if errors and errors["count"]:
+        print(f"::error::ports: the guide was NOT installed to spec: {errors['not_installed']} component(s) "
+              f"not installed ({errors['deselected']} deselected because of errors, {errors['quarantined']} "
+              f"quarantined), {errors['bind_unresolved']} component(s) with an unresolved archive binding; "
+              f"every other component was installed", file=sys.stderr)
+    if report.get("status") == "partial":
+        print(f"::warning title=partial install::ports: finished PARTIAL: "
+              f"{len(report.get(OMITTED_KEY) or ())} component(s) not installed because their "
+              f"archive is not obtainable (see report {OMITTED_KEY}); every other component was "
+              f"installed, but this is not a full install of the guide", file=sys.stderr)
 
 
 IMPLEMENTATION_SECTIONS = {
@@ -2632,57 +2779,72 @@ SKIPPED_REPORT_KEY = "skipped_by_reviewed_policy"
 LANE_SKIPS_PATH = Path(__file__).with_name("archive_selections.json")
 LANE_SKIP_GAMES = ("k1", "k2")
 LANE_SKIP_KEYS = frozenset({"section", "heading", "reason"})
-LANE_SKIP_PINNED_KEYS = frozenset({"guid", "kind"})
 LANE_SKIP_LANES = ("typescript", "rust")
 LANE_SKIP_BIND_DIAGNOSTICS = ("loose_file_unresolved", "patcher_unresolved")
 UNAPPLIED_BIND_SKIPS_KEY = "unapplied_bind_skips"
-LANE_SKIP_KINDS = ("unreviewed_draft", "dependent_of_deselected")
-PENDING_REVIEW_KEY = "deselected_pending_review"
+# Severity of a deselected component. Only an archive no source can provide (or one the cache
+# never holds by policy) and a step the guide itself says not to apply in this setup are warnings;
+# every other component that is not installed fails the lane once everything else is installed.
+SEVERITY_WARNING = "warning"
+SEVERITY_ERROR = "error"
+SEVERITIES = (SEVERITY_WARNING, SEVERITY_ERROR)
+UNAVAILABLE_SOURCE = "archive_unavailable"
+RESTORE_POLICY_SOURCE = "restore_report"
+# Sources whose (warning) deselections make a passing lane "partial" (omitted_components).
+OMISSION_SOURCES = (RESTORE_POLICY_SOURCE, UNAVAILABLE_SOURCE)
+# Lane statuses that exit 0: everything installed, or everything but unobtainable archives.
+PASSING_STATUSES = ("installed", "partial")
+NO_INSTRUCTIONS_SOURCE = "no_instructions"
+DRAFT_REFUSED_SOURCE = "draft_not_acceptable"
+DEPENDENT_KIND = "dependent_of_deselected"
+NOT_INSTALLED = "not-installed"
 
 
 def load_policy_skips(path, guide):
-    """Read cache.py restore --report and return its reviewed skipped steps.
+    """Read cache.py restore --report and return the guide steps it says cannot be installed.
 
-    Each step is {guide, section, heading, url, reason}; steps naming the same
-    section and heading are merged into one record carrying every URL.
+    `skipped_steps` are the reviewed uncached-by-policy steps; `unavailable_steps` (cache.py
+    restore --deselect-unavailable) are steps whose archive no source could provide. Each step is
+    {guide, section, heading, url, reason}; steps naming the same section and heading are merged
+    into one record carrying every URL. Both are warnings: the archive is not obtainable.
     """
     document = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(document, dict) or document.get("ok") is not True:
         raise Blocked("restore_report_not_ok")
-    steps = document.get("skipped_steps", [])
-    if not isinstance(steps, list):
-        raise Blocked("restore_report_skipped_steps_invalid")
     merged = {}
-    for step in steps:
-        if (not isinstance(step, dict)
-                or any(not isinstance(step.get(key), str) or not step[key].strip()
-                       for key in ("guide", "section", "heading", "url", "reason"))):
-            raise Blocked("restore_report_skipped_step_invalid")
-        if Path(step["guide"]).resolve() != guide:
-            raise Blocked("restore_report_guide_mismatch")
-        record = merged.setdefault((step["section"], step["heading"]), {
-            "section": step["section"], "heading": step["heading"],
-            "reason": step["reason"], "urls": [], "source": "restore_report"})
-        if step["url"] not in record["urls"]:
-            record["urls"].append(step["url"])
+    for key, source in (("skipped_steps", RESTORE_POLICY_SOURCE), ("unavailable_steps", UNAVAILABLE_SOURCE)):
+        steps = document.get(key, [])
+        if not isinstance(steps, list):
+            raise Blocked("restore_report_skipped_steps_invalid")
+        for step in steps:
+            if (not isinstance(step, dict)
+                    or any(not isinstance(step.get(name), str) or not step[name].strip()
+                           for name in ("guide", "section", "heading", "url", "reason"))):
+                raise Blocked("restore_report_skipped_step_invalid")
+            if Path(step["guide"]).resolve() != guide:
+                raise Blocked("restore_report_guide_mismatch")
+            record = merged.setdefault((step["section"], step["heading"]), {
+                "section": step["section"], "heading": step["heading"],
+                "reason": step["reason"], "urls": [], "source": source,
+                "severity": SEVERITY_WARNING})
+            if step["url"] not in record["urls"]:
+                record["urls"].append(step["url"])
     return list(merged.values())
 
 
 def load_lane_skips(game, path=None, implementation="rust"):
     """Return the reviewed lane skips for one game from archive_selections.json.
 
-    The `lane_skips` table maps k1/k2 to a list of {section, heading, reason}
-    objects, each optionally pinned with a `guid` and a `kind` (both or neither;
-    see LANE_SKIP_KINDS). An unpinned entry with `"lane": "rust"` and a `bind_diagnostic`
+    The `lane_skips` table maps k1/k2 to a list of {section, heading, reason} objects. An
+    optional `severity` (SEVERITIES, default "error") says whether leaving the step out fails the
+    lane: "warning" is only for a step the guide itself says not to apply to this game setup.
+    An error-severity skip still deselects the component (and its dependents) so the rest of the
+    guide installs, and then fails the lane. An entry with `"lane": "rust"` and a `bind_diagnostic`
     (see LANE_SKIP_BIND_DIAGNOSTICS) is a Rust-only skip that coverage applies only while the
     archive binding stage recorded that diagnostic for the component and the component still has
     no instructions (see bind_skip_state). The whole table is validated whatever the game, so a
-    malformed entry for the other game still blocks. A missing file or table
-    skips nothing. Entries pinned with a `guid`/`kind` record the Rust converter's
-    unreviewed-draft state and name Rust GUIDs, so the TypeScript lanes apply only
-    the unpinned entries (the policy skips such as the 4GB Patcher). An unpinned entry
-    with `"lane": "typescript"` applies to the TypeScript lanes alone, and may share a
-    step with a pinned Rust entry.
+    malformed entry for the other game still blocks. A missing file or table skips nothing. An
+    entry with `"lane": "typescript"` applies to the TypeScript lanes alone.
     """
     path = Path(path or LANE_SKIPS_PATH)
     if not path.is_file():
@@ -2696,29 +2858,21 @@ def load_lane_skips(game, path=None, implementation="rust"):
         if not isinstance(entries, list):
             raise Blocked("lane_skips_invalid")
         seen = {"rust": set(), "typescript": set()}
-        seen_guids = set()
         for entry in entries:
             if (not isinstance(entry, dict) or not LANE_SKIP_KEYS <= entry.keys()
-                    or not entry.keys() <= LANE_SKIP_KEYS | LANE_SKIP_PINNED_KEYS | {"lane", "bind_diagnostic"}
+                    or not entry.keys() <= LANE_SKIP_KEYS | {"lane", "bind_diagnostic", "severity"}
                     or any(not isinstance(entry[key], str) or not entry[key].strip()
                            or entry[key] != entry[key].strip()
-                           for key in entry.keys() & (LANE_SKIP_KEYS | {"guid"}))):
+                           for key in entry.keys() & LANE_SKIP_KEYS)):
                 raise Blocked("lane_skips_invalid")
-            if "lane" in entry and (entry["lane"] not in LANE_SKIP_LANES
-                                    or entry.keys() & LANE_SKIP_PINNED_KEYS):
+            if "lane" in entry and entry["lane"] not in LANE_SKIP_LANES:
+                raise Blocked("lane_skips_invalid")
+            if entry.get("severity", SEVERITY_ERROR) not in SEVERITIES:
                 raise Blocked("lane_skips_invalid")
             if "bind_diagnostic" in entry and (entry["bind_diagnostic"] not in LANE_SKIP_BIND_DIAGNOSTICS
                                                or entry.get("lane") != "rust"):
                 raise Blocked("lane_skips_invalid")
-            if entry.keys() & LANE_SKIP_PINNED_KEYS:
-                if (entry.keys() & LANE_SKIP_PINNED_KEYS != LANE_SKIP_PINNED_KEYS
-                        or entry["kind"] not in LANE_SKIP_KINDS or not canonical_guid(entry["guid"])):
-                    raise Blocked("lane_skips_invalid")
-                if entry["guid"] in seen_guids:
-                    raise Blocked("lane_skips_duplicate")
-                seen_guids.add(entry["guid"])
-            lanes = ({entry["lane"]} if "lane" in entry
-                     else {"rust"} if "guid" in entry else {"rust", "typescript"})
+            lanes = {entry["lane"]} if "lane" in entry else {"rust", "typescript"}
             key = (entry["section"], entry["heading"])
             if any(key in seen[lane] for lane in lanes):
                 raise Blocked("lane_skips_duplicate")
@@ -2726,9 +2880,8 @@ def load_lane_skips(game, path=None, implementation="rust"):
                 seen[lane].add(key)
             if name == game and implementation in lanes:
                 skip = {"section": entry["section"], "heading": entry["heading"],
-                        "reason": entry["reason"], "urls": [], "source": "lane_skips"}
-                if "guid" in entry:
-                    skip.update(guid=entry["guid"], kind=entry["kind"])
+                        "reason": entry["reason"], "urls": [], "source": "lane_skips",
+                        "severity": entry.get("severity", SEVERITY_ERROR)}
                 if "bind_diagnostic" in entry:
                     skip["bind_diagnostic"] = entry["bind_diagnostic"]
                 result.append(skip)
@@ -2846,8 +2999,7 @@ def coverage(guide, converted, report=None, implementation="rust", skipped=()):
         key = (skip["section"], skip["heading"])
         if key not in guide_steps:
             raise Blocked("policy_skipped_step_not_in_guide")
-        record = {"status": SKIPPED_BY_POLICY,
-                  **{name: value for name, value in skip.items() if name != "guid"},
+        record = {"status": SKIPPED_BY_POLICY, "severity": SEVERITY_ERROR, **skip,
                   "component_guid": None}
         if key in steps:
             if steps.count(key) != 1:
@@ -2857,8 +3009,6 @@ def coverage(guide, converted, report=None, implementation="rust", skipped=()):
             if not isinstance(component, dict) or not component.get("Guid"):
                 raise Blocked("policy_skipped_component_unidentified")
             identity = guid(component["Guid"])
-            if "guid" in skip and skip["guid"] != identity:
-                raise Blocked("policy_skipped_guid_mismatch")
             record["component_guid"] = identity
             if "bind_diagnostic" in skip:
                 state, reason = bind_skip_state(report, identity, skip["bind_diagnostic"], component)
@@ -2869,40 +3019,62 @@ def coverage(guide, converted, report=None, implementation="rust", skipped=()):
                     continue
                 record["bind_diagnostic_reason"] = reason
             exempt.add(index)
-        elif "guid" in skip or "bind_diagnostic" in skip:
+        elif "bind_diagnostic" in skip:
             raise Blocked("policy_skipped_guid_unmatched")
         records.append(record)
     skipped_guids = {record["component_guid"] for record in records
                      if record["component_guid"] is not None}
-    for other in (component for index, component in enumerate(components) if index not in exempt):
-        if isinstance(other, dict) and skipped_guids & {
-                normalized_reference(each) for each in other.get("Dependencies", [])}:
-            raise Blocked("policy_skipped_component_has_dependents")
-    if report is not None:
-        report[SKIPPED_REPORT_KEY] = records
-        if unapplied:
-            report[UNAPPLIED_BIND_SKIPS_KEY] = unapplied
-        pending = [{"component_guid": record["component_guid"], "heading": record["heading"],
-                    "kind": record["kind"]} for record in records if record.get("kind")]
-        if pending:
-            report[PENDING_REVIEW_KEY] = {
-                "count": len(pending),
-                "by_kind": {kind: sum(item["kind"] == kind for item in pending)
-                            for kind in LANE_SKIP_KINDS},
-                "components": pending}
-        reclassify_policy_skips(report, skipped_guids)
     uncovered = [index for index, component in enumerate(components)
                  if index not in exempt and (not isinstance(component, dict)
                                              or not component.get("Instructions"))]
     if uncovered:
+        details = uncovered_steps(report or {}, headings, components, uncovered)
         if report is not None:
-            report["steps_without_instructions"] = uncovered_steps(
-                report, headings, components, uncovered)
-        raise Blocked("guide_steps_without_instructions")
+            report["steps_without_instructions"] = details
+        for index, step in zip(uncovered, details):
+            if not step["component_guid"]:
+                raise Blocked("guide_step_without_instructions_unidentified")
+            records.append({"status": NOT_INSTALLED, "severity": SEVERITY_ERROR,
+                            "section": steps[index][0], "heading": step["heading"],
+                            "reason": "the converter generated no instructions"
+                                      + (f": {step['skip_reason']}" if step["skip_reason"] else ""),
+                            "urls": step["urls"], "source": NO_INSTRUCTIONS_SOURCE,
+                            "component_guid": guid(step["component_guid"])})
+            exempt.add(index)
+    cascade_dependents(components, records)
     if any(component.get("Heading", component.get("Name")) != heading
            for component, heading in zip(components, headings)):
         raise Blocked("guide_component_order_or_heading_mismatch")
+    if report is not None:
+        report[SKIPPED_REPORT_KEY] = records
+        if unapplied:
+            report[UNAPPLIED_BIND_SKIPS_KEY] = unapplied
+        reclassify_policy_skips(report, skipped_guids)
     return len(components)
+
+
+def cascade_dependents(components, records, start=0):
+    """Deselect, in place, every component that depends on a component records[start:] deselects.
+
+    The guide's Dependencies form a DAG; a component whose dependency is not installed cannot be
+    installed either. Each dependent is appended once (to the first root that reaches it,
+    directly or through other dependents) with that root's severity, so a dependent of a missing
+    download is a warning and a dependent of a failure is an error.
+    """
+    components = [component for component in components if isinstance(component, dict)]
+    taken = {record["component_guid"] for record in records if record.get("component_guid")}
+    for record in list(records[start:]):
+        root = record.get("component_guid")
+        if not root:
+            continue
+        for identity, dependent in transitive_dependents(components, root, taken).items():
+            taken.add(identity)
+            records.append({
+                "status": record["status"], "severity": record["severity"],
+                "section": None, "heading": dependent.get("Heading", dependent.get("Name")),
+                "reason": f"depends on {record['heading']}, which is not installed ({record['reason']})",
+                "urls": [], "source": record["source"], "kind": DEPENDENT_KIND,
+                "caused_by": root, "component_guid": identity})
 
 
 def gui_widescreen_scope(converted, policy_guids):
@@ -3146,13 +3318,26 @@ def execute(args, report):
         guide.parent.name, implementation=args.implementation))
     report["component_count"] = coverage(
         guide, converted, report, args.implementation, skipped)
+    gui_rust = args.implementation == "rust" and args.mode == "gui"
+
+    def deselected_now():
+        return {record["component_guid"] for record in report.get(SKIPPED_REPORT_KEY, [])
+                if record["component_guid"] is not None}
+
+    if args.implementation == "rust":
+        report["stage"] = "draft_review"
+        exempt = deselected_now()
+        if gui_rust:
+            exempt |= {item["component_guid"] for item in gui_widescreen_scope(converted, exempt)[0]}
+        accept_drafts(command, source, converted, private, report, env, exempt, gui_rust)
+        if digest(guide) != report["guide_sha256"]:
+            raise Blocked("guide_changed_during_conversion")
+        report["converted_sha256"] = digest(converted)
     deselect = []
     for record in report.get(SKIPPED_REPORT_KEY, []):
         if record["component_guid"] is not None:
             deselect += ["--deselect", record["component_guid"]]
-    policy_guids = {record["component_guid"] for record in report.get(SKIPPED_REPORT_KEY, [])
-                    if record["component_guid"] is not None}
-    gui_rust = args.implementation == "rust" and args.mode == "gui"
+    policy_guids = deselected_now()
     excluded, has_widescreen = ([], False)
     if gui_rust:
         excluded, has_widescreen = gui_widescreen_scope(converted, policy_guids)
@@ -3165,6 +3350,7 @@ def execute(args, report):
         pending = pending_drafts(
             converted, policy_guids | {item["component_guid"] for item in excluded}, gui_rust)
         if pending:
+            # accept_drafts accepted or deselected every pending draft; one left is a bug.
             report.setdefault("draft_review", {})["unreviewed"] = pending
             raise Blocked("unreviewed_draft_instructions_remain: " + "; ".join(
                 f"{item['component_guid']} ({item['heading']})" for item in pending))
@@ -3312,10 +3498,12 @@ def main(argv=None):
                         help="cache.py restore --archive-map JSON passed to the Rust convert; TypeScript lanes use it "
                              "to link restored archives under the names the converted Extract globs match")
     parser.add_argument("--restore-report", type=Path,
-                        help="cache.py restore --report JSON; its reviewed skipped_steps are exempted from "
-                             "coverage, recorded in the report and left out of the install (Rust --deselect, "
-                             "TypeScript --select of the rest). Both implementations also apply the reviewed "
-                             "lane_skips of archive_selections.json (TypeScript: the unpinned entries only)")
+                        help="cache.py restore --report JSON; its reviewed skipped_steps and its "
+                             "unavailable_steps (restore --deselect-unavailable) are left out of the install "
+                             "(Rust --deselect, TypeScript --select of the rest) with their dependents and "
+                             "recorded as warnings. Both implementations also apply the lane_skips of "
+                             "archive_selections.json for their lane (error severity unless the entry says "
+                             "warning)")
     parser.add_argument("--max-quarantine", type=int, default=QUARANTINE_MAX_ITERATIONS,
                         help="most validate and install failures together to quarantine (Rust), or validate "
                              "failures (TypeScript) "
@@ -3347,13 +3535,21 @@ def main(argv=None):
             return 2
         try:
             execute(args, report)
-            pending = report.get(PENDING_REVIEW_KEY)
-            if report["status"] == "installed" and pending:
-                # Deselecting unreviewed components is not a pass: the guide was not installed.
-                report["status"] = "partial"
+            errors = lane_errors(report)
+            report[LANE_ERRORS_KEY] = errors
+            omitted = omitted_components(report)
+            report[OMITTED_KEY] = omitted
+            report["partial"] = bool(omitted)
+            if report["status"] == "installed" and errors["count"]:
+                # Everything installable was installed, but the guide was not installed to spec.
+                report["status"] = "incomplete"
                 report["install_reason"] = report.get("reason")
-                report["reason"] = (f"deselected_pending_review: {pending['count']} component(s) "
-                                    "were never installed")
+                report["reason"] = (f"install_incomplete: {errors['not_installed']} component(s) not "
+                                    f"installed and {errors['bind_unresolved']} installed from an "
+                                    "unresolved archive binding")
+            elif report["status"] == "installed" and omitted:
+                # Everything obtainable was installed to spec; unobtainable archives were left out.
+                report["status"] = "partial"
         except Blocked as error:
             report["reason"] = str(error)
         except (OSError, ValueError, TypeError, KeyError):
@@ -3365,7 +3561,7 @@ def main(argv=None):
         print(json.dumps(report), flush=True)
         print_diagnostics(report)
         sys.stderr.flush()
-        return 0 if report["status"] == "installed" else 1
+        return 0 if report["status"] in PASSING_STATUSES else 1
     except OSError:
         print("ports: unable to write sanitized report", file=sys.stderr)
         return 2

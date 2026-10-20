@@ -10,7 +10,6 @@ import tomllib
 import unittest
 from unittest import mock
 
-import deselect_unreviewed
 import ports
 
 GUIDE = """# Guide
@@ -64,12 +63,26 @@ def document(*blocks):
     return "[Config]\nTargetGame = \"KOTOR2\"\n\n" + "\n".join(blocks)
 
 
+def accept_reviewed(text, guids):
+    """What `convert --review-draft GUID...` does to the drafts of those top-level components."""
+    for guid in guids:
+        text = text.replace(
+            'RequiresReview = true\n[thisMod.DraftReview.Result]\nComponentGuid = "' + guid + '"',
+            'RequiresReview = false\n[thisMod.DraftReview.Result]\nComponentGuid = "' + guid + '"')
+    return text
+
+
 def reviewing(fake_run):
-    """Wrap a fake `ports.run` so the draft-review convert copies its input to its output."""
+    """Wrap a fake `ports.run` so the draft-review convert copies its input to its output and the
+    draft-accept convert marks the drafts it names reviewed."""
     def wrapped(command, source, private, stage, report, env):
         fake_run(command, source, private, stage, report, env)
         if stage == ports.DRAFT_REVIEW_STAGE:
             Path(command[3]).write_bytes(Path(command[2]).read_bytes())
+        if stage == ports.DRAFT_ACCEPT_STAGE and not Path(command[3]).exists():
+            guids = [value for flag, value in zip(command, command[1:]) if flag == "--review-draft"]
+            Path(command[3]).write_text(accept_reviewed(Path(command[2]).read_text(encoding="utf-8"), guids),
+                                        encoding="utf-8")
     return wrapped
 
 
@@ -181,9 +194,13 @@ class PolicySkipCoverageTests(unittest.TestCase):
         restore_report(self.report_path, self.guide.resolve(), *keys, ok=ok)
         return ports.load_policy_skips(self.report_path, self.guide.resolve())
 
-    def test_without_skip_the_component_without_instructions_blocks(self):
-        with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-            ports.coverage(self.guide, self.converted, {})
+    def test_without_skip_the_component_without_instructions_is_deselected_as_an_error(self):
+        report = {}
+        self.assertEqual(ports.coverage(self.guide, self.converted, report), 3)
+        record, = report["skipped_by_reviewed_policy"]
+        self.assertEqual((record["heading"], record["component_guid"], record["source"], record["severity"]),
+                         ("Loose Movies", MOVIES_GUID, "no_instructions", "error"))
+        self.assertEqual([step["heading"] for step in report["steps_without_instructions"]], ["Loose Movies"])
 
     def test_skipped_component_is_exempt_recorded_and_identified(self):
         report = {}
@@ -202,18 +219,26 @@ class PolicySkipCoverageTests(unittest.TestCase):
             "[[thisMod]]\nGuid = \"40000000-0000-0000-0000-000000000002\"\nName = \"Mod Two\"\nIsSelected = true\n",
             "[[thisMod]]\nGuid = \"" + MOVIES_GUID + "\"\nName = \"Loose Movies\"\nIsSelected = true\n",
         ), encoding="utf-8")
-        with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-            ports.coverage(self.guide, self.converted, {}, "rust", self.skips(MOVIES))
+        report = {}
+        ports.coverage(self.guide, self.converted, report, "rust", self.skips(MOVIES))
+        self.assertEqual([(record["heading"], record["severity"]) for record in report["skipped_by_reviewed_policy"]],
+                         [("Loose Movies", "warning"), ("Mod Two", "error")])
 
     def test_step_missing_from_guide_blocks(self):
         with self.assertRaisesRegex(ports.Blocked, "policy_skipped_step_not_in_guide"):
             ports.coverage(self.guide, self.converted, {}, "rust",
                            self.skips(("Optional Helper Section", "Nonexistent")))
 
-    def test_component_with_dependents_blocks(self):
+    def test_dependents_of_a_skipped_component_cascade_with_its_severity(self):
         self.converted.write_text(helper_document(dependents=True), encoding="utf-8")
-        with self.assertRaisesRegex(ports.Blocked, "policy_skipped_component_has_dependents"):
-            ports.coverage(self.guide, self.converted, {}, "rust", self.skips(MOVIES))
+        report = {}
+        ports.coverage(self.guide, self.converted, report, "rust", self.skips(MOVIES))
+        records = [record for record in report["skipped_by_reviewed_policy"] if record["component_guid"]]
+        self.assertEqual(records[0]["component_guid"], MOVIES_GUID)
+        self.assertTrue(records[1:])
+        for record in records[1:]:
+            self.assertEqual((record["kind"], record["severity"]), ("dependent_of_deselected", "warning"))
+            self.assertIn("which is not installed", record["reason"])
 
     def test_report_must_be_ok_and_for_this_guide(self):
         with self.assertRaisesRegex(ports.Blocked, "restore_report_not_ok"):
@@ -289,21 +314,30 @@ class AlternativeCutsceneSkipTests(unittest.TestCase):
                           for record in report["skipped_by_reviewed_policy"]],
                          [("Cutscenes Pack A", PACK_A_GUID)])
         self.converted.write_text(alternatives_document(pack_b_instructions=False), encoding="utf-8")
-        with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-            ports.coverage(self.guide, self.converted, {}, "rust", self.skips())
+        report = {}
+        ports.coverage(self.guide, self.converted, report, "rust", self.skips())
+        self.assertEqual([(record["heading"], record["severity"]) for record in report["skipped_by_reviewed_policy"]],
+                         [("Cutscenes Pack A", "warning"), ("Cutscenes Pack B", "error")])
 
-    def test_skipped_pack_without_the_reviewed_flag_still_blocks(self):
+    def test_skipped_pack_without_the_reviewed_flag_is_an_error(self):
         self.converted.write_text(alternatives_document(), encoding="utf-8")
-        with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-            ports.coverage(self.guide, self.converted, {}, "rust", [])
+        report = {}
+        ports.coverage(self.guide, self.converted, report, "rust", [])
+        self.assertEqual([(record["heading"], record["source"], record["severity"])
+                          for record in report["skipped_by_reviewed_policy"]],
+                         [("Cutscenes Pack A", "no_instructions", "error")])
 
-    def test_a_component_listing_the_skipped_pack_as_a_dependency_blocks(self):
+    def test_a_component_listing_the_skipped_pack_as_a_dependency_is_deselected_with_it(self):
         document_text = alternatives_document().replace(
             'Name = "Loading Screens"',
             'Name = "Loading Screens"\nDependencies = ["' + PACK_A_GUID.upper() + '"]')
         self.converted.write_text(document_text, encoding="utf-8")
-        with self.assertRaisesRegex(ports.Blocked, "policy_skipped_component_has_dependents"):
-            ports.coverage(self.guide, self.converted, {}, "rust", self.skips())
+        report = {}
+        ports.coverage(self.guide, self.converted, report, "rust", self.skips())
+        pack, dependent = report["skipped_by_reviewed_policy"]
+        self.assertEqual(pack["component_guid"], PACK_A_GUID)
+        self.assertEqual((dependent["heading"], dependent["caused_by"], dependent["severity"]),
+                         ("Loading Screens", PACK_A_GUID, "warning"))
 
     def test_a_pack_heading_that_appears_twice_blocks(self):
         self.guide.write_text(GUIDE_WITH_ALTERNATIVES.replace(
@@ -382,22 +416,29 @@ class RealK2GuideCutsceneSkipTests(unittest.TestCase):
         path.write_text(document(*blocks), encoding="utf-8")
         return path, len(blocks)
 
+    def records(self, report):
+        return [(record["section"], record["heading"], record["component_guid"], record["source"],
+                 record["severity"]) for record in report["skipped_by_reviewed_policy"]]
+
     def test_the_k2_rescaled_cutscene_step_is_the_only_exempt_component(self):
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(lambda: __import__("shutil").rmtree(directory))
         converted, count = self.converted_from_guide(directory, instructed=True)
-        with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-            ports.coverage(self.GUIDE, converted, {}, "rust", [])
+        report = {}
+        self.assertEqual(ports.coverage(self.GUIDE, converted, report, "rust", []), count)
+        self.assertEqual(self.records(report), [(*self.STEP, self.guid, "no_instructions", "error")])
         report_path = restore_report(directory / "restore.json", self.GUIDE, self.STEP)
         skips = ports.load_policy_skips(report_path, self.GUIDE)
         report = {}
         self.assertEqual(ports.coverage(self.GUIDE, converted, report, "rust", skips), count)
-        self.assertEqual([(record["section"], record["heading"], record["component_guid"])
-                          for record in report["skipped_by_reviewed_policy"]],
-                         [(self.STEP[0], self.STEP[1], self.guid)])
+        self.assertEqual(self.records(report), [(*self.STEP, self.guid, "restore_report", "warning")])
         converted, _ = self.converted_from_guide(directory, instructed=False)
-        with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-            ports.coverage(self.GUIDE, converted, {}, "rust", skips)
+        report = {}
+        ports.coverage(self.GUIDE, converted, report, "rust", skips)
+        alternative, = [record for record in report["skipped_by_reviewed_policy"]
+                        if record["heading"] == self.ALTERNATIVE]
+        self.assertEqual((alternative["source"], alternative["severity"]), ("no_instructions", "error"))
+        self.assertEqual(len(report["skipped_by_reviewed_policy"]), 2)
 
 
 CONVERT_REPORT = [
@@ -474,8 +515,13 @@ class ConvertSkipReportTests(unittest.TestCase):
         ports.record_convert_skips(convert_log(self.directory / "convert.log", results), report)
         report_path = restore_report(self.directory / "restore.json", guide.resolve(), MOVIES)
         skips = ports.load_policy_skips(report_path, guide.resolve())
-        with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-            ports.coverage(guide, converted, report, "rust", skips)
+        self.assertEqual(ports.coverage(guide, converted, report, "rust", skips), 3)
+        # The component without instructions is deselected as an error; only the reviewed
+        # policy skip moves to its own bucket.
+        self.assertEqual([(record["heading"], record["source"], record["severity"])
+                          for record in report["skipped_by_reviewed_policy"]],
+                         [("Loose Movies", "restore_report", "warning"),
+                          ("Mod Two", "no_instructions", "error")])
         self.assertEqual(report["convert_skips"]["by_cause"],
                          {"no_archive_matched": 1, "skipped_by_reviewed_policy": 1})
         self.assertEqual([item["cause"] for item in report["convert_skips"]["components"]],
@@ -488,6 +534,10 @@ class ConvertSkipReportTests(unittest.TestCase):
         text = stderr.getvalue()
         self.assertIn("not generated: no_archive_matched=1; reviewed-policy-skipped=1", text)
         self.assertIn("- Mod Two [40000000-0000-0000-0000-000000000002]", text)
+        self.assertIn("::error::ports: NOT INSTALLED Mod Two [40000000-0000-0000-0000-000000000002] "
+                      "(no_instructions): the converter generated no instructions: "
+                      "No matching archive found for 'mod-two'", text)
+        self.assertIn("::warning::ports: DESELECTED Loose Movies [" + MOVIES_GUID + "] (restore_report)", text)
 
     def test_missing_or_unparseable_log_records_nothing(self):
         report = {}
@@ -510,8 +560,12 @@ class ConvertSkipReportTests(unittest.TestCase):
                          encoding="utf-8")
         report = {}
         ports.record_convert_skips(convert_log(self.directory / "convert.log"), report)
-        with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-            ports.coverage(guide, converted, report)
+        self.assertEqual(ports.coverage(guide, converted, report), 2)
+        self.assertEqual(report["skipped_by_reviewed_policy"], [{
+            "status": "not-installed", "severity": "error", "section": "Mod List", "heading": "Mod Two",
+            "reason": "the converter generated no instructions: No matching archive found for 'mod-two'",
+            "urls": ["https://example.invalid/files/two/", "https://example.invalid/files/two-patch/"],
+            "source": "no_instructions", "component_guid": "40000000-0000-0000-0000-000000000002"}])
         self.assertEqual(report["steps_without_instructions"], [{
             "heading": "Mod Two", "component_guid": "40000000-0000-0000-0000-000000000002",
             "urls": ["https://example.invalid/files/two/", "https://example.invalid/files/two-patch/"],
@@ -1089,18 +1143,27 @@ class VerifiedDraftReviewTests(unittest.TestCase):
         self.assertEqual(report["converted_sha256"],
                          hashlib.sha256((private / "converted.toml").read_bytes()).hexdigest())
 
-    def test_unreviewed_drafts_block_before_validate_and_list_every_guid(self):
-        converted = document(drafted("Mod One", DRAFT_ONE), drafted("Mod Two", DRAFT_TWO))
+    def test_unreviewed_drafts_are_accepted_or_deselected_before_validate(self):
+        converted = document(drafted("Mod One", DRAFT_ONE), drafted("Mod Two", DRAFT_TWO, gaps=1))
         for mode in ("cli", "gui"):
             with self.subTest(mode=mode):
-                _, commands, report, error = self.run_lane(converted, mode)
-                self.assertTrue(error.startswith("unreviewed_draft_instructions_remain: "))
-                self.assertIn(DRAFT_ONE, error)
-                self.assertIn(DRAFT_TWO, error)
-                self.assertIn("Mod One", error)
-                self.assertNotIn("validate", [stage for stage, _ in commands])
-                self.assertEqual([item["component_guid"] for item in report["draft_review"]["unreviewed"]],
-                                 [DRAFT_ONE, DRAFT_TWO])
+                _, commands, report, _ = self.run_lane(converted, mode)
+                stages = [stage for stage, _ in commands]
+                self.assertEqual(stages[:5], ["build", "convert", ports.DRAFT_REVIEW_STAGE,
+                                              ports.DRAFT_ACCEPT_STAGE, "validate"])
+                accept = dict(commands)[ports.DRAFT_ACCEPT_STAGE]
+                self.assertEqual([value for flag, value in zip(accept, accept[1:]) if flag == "--review-draft"],
+                                 [DRAFT_ONE])
+                self.assertEqual(report["draft_acceptance"], {
+                    "accepted": [DRAFT_ONE],
+                    "refused": [{"component_guid": DRAFT_TWO, "reason": "1 unparsed gap(s): gap"}]})
+                self.assertEqual([(record["component_guid"], record["source"], record["severity"])
+                                  for record in report["skipped_by_reviewed_policy"]],
+                                 [(DRAFT_TWO, "draft_not_acceptable", "error")])
+                validate = dict(commands)["validate"]
+                self.assertEqual([value for flag, value in zip(validate, validate[1:]) if flag == "--deselect"],
+                                 [DRAFT_TWO])
+                self.assertNotIn("unreviewed", report["draft_review"])
                 self.assertEqual(report["draft_review"]["cleared"], 1)
 
     def test_reviewed_components_let_the_lane_reach_validate(self):
@@ -1437,7 +1500,7 @@ class ArchiveBindingTests(unittest.TestCase):
         self.assertEqual(report["bind_diagnostics"], [{
             "stage": ports.BIND_STAGE, "component": "Mod Two", "component_guid": BIND_TWO,
             "kind": "loose_file_unresolved", "reason": UNRESOLVED_REASON}])
-        self.assertIn("::warning::ports: bind_archives: Mod Two [" + BIND_TWO + "]: " + UNRESOLVED_REASON,
+        self.assertIn("::error::ports: bind_archives: Mod Two [" + BIND_TWO + "]: " + UNRESOLVED_REASON,
                       stderr.getvalue())
 
     def test_bind_diagnostics_are_kept_when_the_generation_pass_fails(self):
@@ -1627,27 +1690,33 @@ class LaneSkipTableTests(unittest.TestCase):
     def shipped(self, game):
         return ports.load_lane_skips(game, SHIPPED_LANE_SKIPS)
 
-    def test_shipped_table_keeps_the_hand_authored_4gb_patcher_in_both_games(self):
+    def test_the_rust_lanes_skip_only_the_guide_sanctioned_4gb_patcher_as_a_warning(self):
         for game in ("k1", "k2"):
-            hand_authored = [skip for skip in self.shipped(game)
-                             if "kind" not in skip and "bind_diagnostic" not in skip]
-            self.assertEqual([(skip["section"], skip["heading"]) for skip in hand_authored], [FOUR_GB], game)
-            self.assertIn(REJECTION, hand_authored[0]["reason"])
-            self.assertEqual(hand_authored[0]["urls"], [])
+            skips = self.shipped(game)
+            self.assertEqual([(skip["section"], skip["heading"]) for skip in skips], [FOUR_GB], game)
+            self.assertIn(REJECTION, skips[0]["reason"])
+            self.assertEqual(skips[0]["urls"], [])
+            self.assertEqual(skips[0]["severity"], "warning")
         self.assertEqual(ports.load_lane_skips("k3", SHIPPED_LANE_SKIPS), [])
 
-    def test_shipped_pending_review_entries_are_pinned_visible_and_unique(self):
-        counts = {"k1": (150, 0), "k2": (118, 1)}
-        for game, (drafts, dependents) in counts.items():
-            pinned = [skip for skip in self.shipped(game) if "kind" in skip]
-            with self.subTest(game=game):
-                self.assertEqual(sum(skip["kind"] == "unreviewed_draft" for skip in pinned), drafts)
-                self.assertEqual(sum(skip["kind"] == "dependent_of_deselected" for skip in pinned), dependents)
-                self.assertEqual(len({skip["guid"] for skip in pinned}), len(pinned))
-                self.assertEqual(len({(skip["section"], skip["heading"]) for skip in pinned}), len(pinned))
-                for skip in pinned:
-                    self.assertIn("deselected pending human review, delegated by owner 2026-10-18",
-                                  skip["reason"])
+    def test_no_shipped_entry_deselects_a_generated_draft_or_a_bind_failure(self):
+        document = json.loads(SHIPPED_LANE_SKIPS.read_text(encoding="utf-8"))
+        for game, entries in document["lane_skips"].items():
+            for entry in entries:
+                with self.subTest(game=game, heading=entry["heading"]):
+                    self.assertFalse(entry.keys() & {"guid", "kind", "bind_diagnostic"})
+                    if entry["heading"] != FOUR_GB[1]:
+                        self.assertNotIn("severity", entry)
+
+    def test_severity_defaults_to_error_and_only_accepts_the_two_levels(self):
+        path = lane_skips_file(self.directory, {"k2": [lane_entry()]})
+        self.assertEqual(ports.load_lane_skips("k2", path)[0]["severity"], "error")
+        path = lane_skips_file(self.directory, {"k2": [lane_entry(severity="warning")]})
+        self.assertEqual(ports.load_lane_skips("k2", path)[0]["severity"], "warning")
+        for value in ("info", "", 3):
+            path = lane_skips_file(self.directory, {"k2": [lane_entry(severity=value)]})
+            with self.subTest(value=value), self.assertRaisesRegex(ports.Blocked, "lane_skips_invalid"):
+                ports.load_lane_skips("k2", path)
 
     def test_typescript_lane_entries_apply_to_the_typescript_lane_only(self):
         path = lane_skips_file(self.directory, {"k2": [
@@ -1657,19 +1726,18 @@ class LaneSkipTableTests(unittest.TestCase):
                          ["4GB Patcher", "TSLRCM"])
         self.assertEqual(ports.load_lane_skips("k1", path, "typescript"), [])
 
-    def test_a_typescript_lane_entry_may_share_a_step_with_a_pinned_rust_entry(self):
-        pinned = lane_entry(heading="TSLRCM", guid="bee5a72b-d748-8f83-8261-81758a9bfc56",
-                            kind="unreviewed_draft")
-        path = lane_skips_file(self.directory, {"k2": [pinned, lane_entry(heading="TSLRCM", lane="typescript")]})
-        self.assertEqual([skip.get("kind") for skip in ports.load_lane_skips("k2", path)], ["unreviewed_draft"])
-        typescript = ports.load_lane_skips("k2", path, "typescript")
-        self.assertEqual([(skip["heading"], skip.get("kind")) for skip in typescript], [("TSLRCM", None)])
+    def test_a_rust_lane_entry_may_share_a_step_with_a_typescript_lane_entry(self):
+        path = lane_skips_file(self.directory, {"k2": [
+            lane_entry(heading="TSLRCM", lane="rust"), lane_entry(heading="TSLRCM", lane="typescript")]})
+        self.assertEqual([skip["heading"] for skip in ports.load_lane_skips("k2", path)], ["TSLRCM"])
+        self.assertEqual([skip["heading"] for skip in ports.load_lane_skips("k2", path, "typescript")], ["TSLRCM"])
 
     def test_malformed_or_clashing_lane_keys_block(self):
         pinned = {"guid": "bee5a72b-d748-8f83-8261-81758a9bfc56", "kind": "unreviewed_draft"}
         for table in (
             {"k2": [lane_entry(lane="python")]},
             {"k2": [lane_entry(lane=3)]},
+            {"k2": [lane_entry(**pinned)]},
             {"k2": [lane_entry(lane="typescript", **pinned)]},
             {"k2": [lane_entry(), lane_entry(lane="typescript")]},
             {"k2": [lane_entry(lane="typescript"), lane_entry()]},
@@ -1680,13 +1748,13 @@ class LaneSkipTableTests(unittest.TestCase):
                 with self.assertRaisesRegex(ports.Blocked, "lane_skips_(invalid|duplicate)"):
                     ports.load_lane_skips("k1", path)
 
-    def test_shipped_k2_typescript_lane_skips_tslrcm_visibly_with_every_dependent(self):
-        skips = [skip for skip in ports.load_lane_skips("k2", SHIPPED_LANE_SKIPS, "typescript")
-                 if "kind" not in skip]
+    def test_shipped_k2_typescript_lane_skips_tslrcm_visibly_with_every_dependent_as_errors(self):
+        skips = ports.load_lane_skips("k2", SHIPPED_LANE_SKIPS, "typescript")
         self.assertEqual([(skip["section"], skip["heading"]) for skip in skips][:2], [FOUR_GB, ("Mod List", "TSLRCM")])
         self.assertEqual(len({skip["heading"] for skip in skips}), len(skips))
         self.assertIn("tslrcm2022.exe", skips[1]["reason"])
         self.assertEqual(len(skips), 2 + 18 + 4)
+        self.assertEqual({skip["severity"] for skip in skips[1:]}, {"error"})
         self.assertEqual([skip["heading"] for skip in skips][-4:],
                          ["PFHC03 Restoration", "Alignment Affects Force Powers", "K2 Remastered Cutscenes",
                           "Remove Duplicate TGA/TPC"])
@@ -1694,14 +1762,6 @@ class LaneSkipTableTests(unittest.TestCase):
                          ["4GB Patcher", "CineMalak", "Bendak Non-Darkside Option",
                           "Alignment Affects Force Powers", "Character Startup Changes",
                           "Remove Duplicate TGA/TPC", "HR Menus"])
-
-    def test_shipped_reasons_are_the_generated_reviewed_text(self):
-        for game in ("k1", "k2"):
-            for skip in self.shipped(game):
-                if skip.get("kind") == "unreviewed_draft":
-                    self.assertEqual(skip["reason"], deselect_unreviewed.DRAFT_REASON)
-                elif skip.get("kind") == "dependent_of_deselected":
-                    self.assertTrue(skip["reason"].startswith("depends on "), skip["reason"])
 
     def test_missing_file_or_table_skips_nothing(self):
         self.assertEqual(ports.load_lane_skips("k1", self.directory / "absent.json"), [])
@@ -1824,16 +1884,27 @@ class LaneSkipLaneTests(unittest.TestCase):
         self.assertEqual(self.deselected(dict(commands)["validate"]), [FOUR_GB_GUID])
 
     def test_the_table_does_not_exempt_any_other_step(self):
-        _, report, error = self.run_lane(converted=four_gb_document(one_instructed=False))
-        self.assertEqual(error, "guide_steps_without_instructions")
+        commands, report, error = self.run_lane(converted=four_gb_document(one_instructed=False))
+        self.assertIsNone(error)
         self.assertEqual([step["heading"] for step in report["steps_without_instructions"]], ["Mod One"])
+        record = report["skipped_by_reviewed_policy"][-1]
+        self.assertEqual((record["heading"], record["source"], record["severity"]),
+                         ("Mod One", "no_instructions", "error"))
+        self.assertEqual(self.deselected(dict(commands)["install"]),
+                         [FOUR_GB_GUID, "50000000-0000-0000-0000-000000000001"])
 
-    def test_without_the_table_the_4gb_patcher_still_blocks_coverage(self):
+    def test_without_the_table_the_4gb_patcher_is_an_error_and_the_rest_still_installs(self):
         commands, report, error = self.run_lane(table=None)
-        self.assertEqual(error, "guide_steps_without_instructions")
+        self.assertIsNone(error)
         self.assertEqual([step["heading"] for step in report["steps_without_instructions"]],
                          ["4GB Patcher"])
-        self.assertNotIn("validate", dict(commands))
+        record, = report["skipped_by_reviewed_policy"]
+        self.assertEqual((record["component_guid"], record["source"], record["severity"]),
+                         (FOUR_GB_GUID, "no_instructions", "error"))
+        self.assertIn(REJECTION, record["reason"])
+        for stage in ("validate", "install"):
+            self.assertEqual(self.deselected(dict(commands)[stage]), [FOUR_GB_GUID])
+        self.assertEqual(ports.lane_errors(report)["not_installed"], 1)
 
     def test_a_lane_skip_for_a_step_the_guide_lacks_blocks(self):
         _, _, error = self.run_lane(table={"k1": [lane_entry(heading="Renamed Step")]})
@@ -1844,12 +1915,19 @@ class LaneSkipLaneTests(unittest.TestCase):
         self.assertEqual(error, "policy_skipped_step_not_in_guide")
 
     def test_a_lane_skip_for_the_other_game_is_ignored(self):
-        _, _, error = self.run_lane(table={"k2": [lane_entry()]})
-        self.assertEqual(error, "guide_steps_without_instructions")
+        _, report, error = self.run_lane(table={"k2": [lane_entry()]})
+        self.assertIsNone(error)
+        self.assertEqual(report["skipped_by_reviewed_policy"][0]["source"], "no_instructions")
 
-    def test_a_dependent_component_blocks_the_lane_skip(self):
-        _, _, error = self.run_lane(converted=four_gb_document(dependents=True))
-        self.assertEqual(error, "policy_skipped_component_has_dependents")
+    def test_a_dependent_component_is_deselected_with_the_lane_skip(self):
+        commands, report, error = self.run_lane(converted=four_gb_document(dependents=True))
+        self.assertIsNone(error)
+        root, dependent = report["skipped_by_reviewed_policy"]
+        self.assertEqual(dependent["component_guid"], "50000000-0000-0000-0000-000000000001")
+        self.assertEqual((dependent["kind"], dependent["caused_by"], dependent["severity"]),
+                         ("dependent_of_deselected", FOUR_GB_GUID, root["severity"]))
+        self.assertEqual(self.deselected(dict(commands)["install"]),
+                         [FOUR_GB_GUID, "50000000-0000-0000-0000-000000000001"])
 
     def test_rust_gui_deselects_the_lane_skip_in_validate_and_the_driver(self):
         commands, _, error = self.run_lane(mode="gui")
@@ -1861,18 +1939,15 @@ class LaneSkipLaneTests(unittest.TestCase):
                              [FOUR_GB_GUID])
         self.assertIn("--exclude-widescreen", staged["gui"])
 
-    def test_typescript_lanes_take_the_unpinned_lane_skip_and_ignore_rust_guid_pins(self):
-        pinned = lane_entry(heading="Mod Two", guid="50000000-0000-0000-0000-000000000003",
-                            kind="unreviewed_draft")
+    def test_typescript_lanes_take_the_shared_and_typescript_entries_only(self):
         root, _ = self.prepare("k1")
-        path = lane_skips_file(root, {"k1": [lane_entry(), pinned]})
+        path = lane_skips_file(root, {"k1": [lane_entry(), lane_entry(heading="Mod Two", lane="rust")]})
         self.assertEqual([skip["heading"] for skip in ports.load_lane_skips("k1", path)],
                          ["4GB Patcher", "Mod Two"])
         typescript = ports.load_lane_skips("k1", path, implementation="typescript")
         self.assertEqual([skip["heading"] for skip in typescript], ["4GB Patcher"])
-        self.assertNotIn("guid", typescript[0])
 
-    def test_typescript_lane_validation_still_covers_pinned_entries(self):
+    def test_generated_guid_pins_are_no_longer_accepted(self):
         root, _ = self.prepare("k1")
         path = lane_skips_file(root, {"k1": [lane_entry(guid="not-a-guid", kind="unreviewed_draft")]})
         with self.assertRaisesRegex(ports.Blocked, "lane_skips_invalid"):
@@ -1903,11 +1978,6 @@ PENDING_ONE = "80000000-0000-0000-0000-000000000001"
 PENDING_TWO = "80000000-0000-0000-0000-000000000002"
 PENDING_THREE = "80000000-0000-0000-0000-000000000003"
 PENDING_WIDE = "80000000-0000-0000-0000-000000000004"
-
-
-def pending_entry(heading, guid, kind="unreviewed_draft", section="Mod List"):
-    return {"section": section, "heading": heading, "guid": guid, "kind": kind,
-            "reason": "unreviewed draft: deselected pending human review, delegated by owner 2026-10-18"}
 
 
 TS_ONE = "40000000-0000-0000-0000-000000000001"
@@ -2007,16 +2077,15 @@ class TypeScriptPolicySkipTests(unittest.TestCase):
         self.assertIs(original["thisMod"][2]["IsSelected"], True)
         self.assertEqual(report["converted_sha256"], ports.digest(private / "converted.toml"))
 
-    def test_the_unpinned_lane_skip_applies_to_typescript_and_pinned_ones_do_not(self):
+    def test_the_shared_lane_skip_applies_to_typescript_and_rust_only_ones_do_not(self):
         converted = four_gb_document()
-        pinned = lane_entry(heading="Mod Two", guid="50000000-0000-0000-0000-000000000003",
-                            kind="unreviewed_draft")
+        rust_only = lane_entry(heading="Mod Two", lane="rust")
         root, args = self.prepare("k1")
         args.guide.write_text(GUIDE_4GB, encoding="utf-8")
         args.implementation = "typescript"
         args.review_manifest = root / "review.json"
         patch = mock.patch.object(ports, "LANE_SKIPS_PATH",
-                                  lane_skips_file(root, {"k1": [lane_entry(), pinned]}))
+                                  lane_skips_file(root, {"k1": [lane_entry(), rust_only]}))
         patch.start()
         self.addCleanup(patch.stop)
         commands = []
@@ -2035,12 +2104,16 @@ class TypeScriptPolicySkipTests(unittest.TestCase):
         record, = report["skipped_by_reviewed_policy"]
         self.assertEqual((record["heading"], record["source"]), ("4GB Patcher", "lane_skips"))
 
-    def test_a_dependent_written_in_braced_form_blocks_the_skip(self):
+    def test_a_dependent_written_in_braced_form_is_left_out_with_the_skip(self):
         converted = helper_document().replace(
             "IsSelected = false", 'IsSelected = false\nDependencies = ["' + TS_BRACED_DEPENDENCY + '"]', 1)
-        _, commands, _, error = self.run_lane(converted=converted)
-        self.assertEqual(error, "policy_skipped_component_has_dependents")
-        self.assertNotIn("validate", dict(commands))
+        _, commands, report, error = self.run_lane(converted=converted)
+        self.assertIsNone(error)
+        dependent = report["skipped_by_reviewed_policy"][-1]
+        self.assertEqual((dependent["kind"], dependent["caused_by"]), ("dependent_of_deselected", MOVIES_GUID))
+        # The root is a reviewed uncached-by-policy step, so the dependent inherits its warning.
+        self.assertEqual((dependent["severity"], dependent["source"]), ("warning", "restore_report"))
+        self.assertNotIn(dependent["component_guid"], ",".join(self.selected(dict(commands)["validate"])))
 
     def test_a_restore_report_for_another_guide_still_blocks(self):
         _, _, _, error = self.run_lane(report_guide=Path(tempfile.gettempdir()) / "other" / "full.md")
@@ -2076,25 +2149,26 @@ class ReviewManifestRegenerationTests(unittest.TestCase):
         self.assertEqual(ports.component_phase({"IsWidescreen": True}), "widescreen")
 
 
-class PendingReviewSkipLaneTests(unittest.TestCase):
+class DraftAcceptanceLaneTests(unittest.TestCase):
+    """The Rust lanes install the guide as generated: clean drafts are accepted, the rest fail."""
     prepare = ExecuteCommandTests.prepare
 
-    def blocks(self, three_depends_on_two=False, three_draft=True):
+    def blocks(self, three_depends_on_two=False, two_gaps=0, three_draft=True):
         three = drafted("Mod Three", PENDING_THREE) if three_draft else component("Mod Three", PENDING_THREE)
         if three_depends_on_two:
             three = three.replace("IsSelected = true", 'IsSelected = true\nDependencies = ["' + PENDING_TWO + '"]', 1)
         return document(
             drafted("Mod One", PENDING_ONE, required=False),
-            drafted("Mod Two", PENDING_TWO),
+            drafted("Mod Two", PENDING_TWO, gaps=two_gaps),
             three,
             drafted("Wide One", PENDING_WIDE, widescreen=True))
 
-    def run_lane(self, table, mode="cli", converted=None):
+    def run_lane(self, mode="cli", converted=None, table=None, accept=None):
         root, args = self.prepare("k1")
         args.guide.write_text(GUIDE_PENDING, encoding="utf-8")
         args.implementation = "rust"
         args.mode = mode
-        path = lane_skips_file(root, table)
+        path = lane_skips_file(root, table or {})
         patch = mock.patch.object(ports, "LANE_SKIPS_PATH", path)
         patch.start()
         self.addCleanup(patch.stop)
@@ -2107,6 +2181,8 @@ class PendingReviewSkipLaneTests(unittest.TestCase):
             if stage == ports.DRAFT_REVIEW_STAGE:
                 (private / (stage + ".log")).write_text(
                     json.dumps({"cleared": [PENDING_ONE], "skipped": []}, indent=2) + "\n", encoding="utf-8")
+            if stage == ports.DRAFT_ACCEPT_STAGE and accept is not None:
+                accept(command)
 
         report = {"commands": []}
         error = None
@@ -2120,187 +2196,309 @@ class PendingReviewSkipLaneTests(unittest.TestCase):
     def deselected(self, command):
         return [value for flag, value in zip(command, command[1:]) if flag == "--deselect"]
 
-    def all_pending(self):
-        return {"k1": [pending_entry("Mod Two", PENDING_TWO), pending_entry("Mod Three", PENDING_THREE),
-                       pending_entry("Wide One", PENDING_WIDE, section="Enhanced Widescreen Support Mods")]}
+    def accepted(self, command):
+        return [value for flag, value in zip(command, command[1:]) if flag == "--review-draft"]
 
-    def test_listed_unreviewed_drafts_pass_the_gate_and_are_deselected_for_validate_and_install(self):
-        commands, report, error = self.run_lane(self.all_pending())
+    def test_clean_drafts_are_accepted_and_every_component_is_installed(self):
+        commands, report, error = self.run_lane()
         self.assertIsNone(error)
         staged = dict(commands)
-        expected = [PENDING_TWO, PENDING_THREE, PENDING_WIDE]
+        self.assertEqual(self.accepted(staged[ports.DRAFT_ACCEPT_STAGE]), [PENDING_TWO, PENDING_THREE, PENDING_WIDE])
         for stage in ("validate", "install"):
-            self.assertEqual(self.deselected(staged[stage]), expected)
-        self.assertNotIn("unreviewed", report["draft_review"])
-        self.assertEqual(report["draft_review"]["cleared"], 1)
+            self.assertEqual(self.deselected(staged[stage]), [])
+        self.assertEqual(report["draft_acceptance"],
+                         {"accepted": [PENDING_TWO, PENDING_THREE, PENDING_WIDE], "refused": []})
+        self.assertEqual(report["skipped_by_reviewed_policy"], [])
+        self.assertEqual(ports.lane_errors(report)["count"], 0)
+        self.assertEqual(report["status"], "installed")
 
-    def test_a_new_unreviewed_draft_that_is_not_listed_still_blocks(self):
-        table = self.all_pending()
-        table["k1"] = [entry for entry in table["k1"] if entry["guid"] != PENDING_THREE]
-        commands, report, error = self.run_lane(table)
-        self.assertTrue(error.startswith("unreviewed_draft_instructions_remain: "))
-        self.assertIn(PENDING_THREE, error)
-        self.assertNotIn(PENDING_TWO, error)
-        self.assertNotIn("validate", [stage for stage, _ in commands])
-        self.assertEqual([item["component_guid"] for item in report["draft_review"]["unreviewed"]],
-                         [PENDING_THREE])
-
-    def test_the_report_and_the_log_list_the_count_and_names_of_deselected_components(self):
-        _, report, error = self.run_lane(self.all_pending())
+    def test_the_accepted_input_is_what_validate_and_install_read(self):
+        commands, report, error = self.run_lane()
         self.assertIsNone(error)
-        pending = report["deselected_pending_review"]
-        self.assertEqual(pending["count"], 3)
-        self.assertEqual(pending["by_kind"], {"unreviewed_draft": 3, "dependent_of_deselected": 0})
-        self.assertEqual([(item["heading"], item["component_guid"]) for item in pending["components"]],
-                         [("Mod Two", PENDING_TWO), ("Mod Three", PENDING_THREE), ("Wide One", PENDING_WIDE)])
+        converted = Path(dict(commands)["install"][dict(commands)["install"].index("--input") + 1])
+        self.assertEqual(ports.pending_drafts(converted, set(), False), [])
+        self.assertEqual(report["converted_sha256"], ports.digest(converted))
+
+    def test_a_draft_with_gaps_is_deselected_as_an_error_with_its_dependents_and_the_rest_installs(self):
+        commands, report, error = self.run_lane(converted=self.blocks(three_depends_on_two=True, two_gaps=2))
+        self.assertIsNone(error)
+        staged = dict(commands)
+        self.assertEqual(self.accepted(staged[ports.DRAFT_ACCEPT_STAGE]), [PENDING_WIDE])
+        for stage in ("validate", "install"):
+            self.assertEqual(self.deselected(staged[stage]), [PENDING_TWO, PENDING_THREE])
+        refused, dependent = report["skipped_by_reviewed_policy"]
+        self.assertEqual((refused["component_guid"], refused["source"], refused["severity"]),
+                         (PENDING_TWO, "draft_not_acceptable", "error"))
+        self.assertIn("2 unparsed gap(s)", refused["reason"])
+        self.assertEqual((dependent["component_guid"], dependent["kind"], dependent["caused_by"],
+                          dependent["severity"]),
+                         (PENDING_THREE, "dependent_of_deselected", PENDING_TWO, "error"))
+        self.assertEqual(ports.lane_errors(report)["not_installed"], 2)
+
+    def test_a_draft_still_fenced_after_acceptance_is_an_error(self):
+        def keep_fenced(command):
+            Path(command[3]).write_text(Path(command[2]).read_text(encoding="utf-8"), encoding="utf-8")
+
+        commands, report, error = self.run_lane(converted=self.blocks(three_draft=False), accept=keep_fenced)
+        self.assertIsNone(error)
+        self.assertEqual(report["draft_acceptance"]["accepted"], [])
+        self.assertEqual({item["reason"] for item in report["draft_acceptance"]["refused"]},
+                         {"still fenced after convert --review-draft"})
+        self.assertEqual(self.deselected(dict(commands)["install"]), [PENDING_TWO, PENDING_WIDE])
+
+    def test_no_accept_stage_runs_when_nothing_is_pending(self):
+        converted = document(*(component(name, guid) for name, guid in (
+            ("Mod One", PENDING_ONE), ("Mod Two", PENDING_TWO), ("Mod Three", PENDING_THREE),
+            ("Wide One", PENDING_WIDE))))
+        commands, report, error = self.run_lane(converted=converted)
+        self.assertIsNone(error)
+        self.assertNotIn(ports.DRAFT_ACCEPT_STAGE, dict(commands))
+        self.assertEqual(report["draft_acceptance"], {"accepted": [], "refused": []})
+
+    def test_a_reordered_accept_output_blocks(self):
+        def reorder(command):
+            text = Path(command[2]).read_text(encoding="utf-8")
+            head, *blocks = text.split("[[thisMod]]")
+            Path(command[3]).write_text(head + "[[thisMod]]" + "[[thisMod]]".join(reversed(blocks)),
+                                        encoding="utf-8")
+
+        _, _, error = self.run_lane(accept=reorder)
+        self.assertEqual(error, "accept_drafts_changed_component_order")
+
+    def test_deselected_components_are_not_accepted(self):
+        table = {"k1": [{"section": "Mod List", "heading": "Mod Two", "reason": "guide: not in this setup",
+                         "severity": "warning"}]}
+        commands, report, error = self.run_lane(table=table)
+        self.assertIsNone(error)
+        self.assertEqual(self.accepted(dict(commands)[ports.DRAFT_ACCEPT_STAGE]), [PENDING_THREE, PENDING_WIDE])
+        self.assertEqual(ports.lane_errors(report)["count"], 0)
+
+    def test_gui_lane_does_not_accept_the_widescreen_drafts_it_excludes(self):
+        commands, report, error = self.run_lane(mode="gui")
+        self.assertEqual(error, "gui_completion_report_missing")
+        self.assertEqual(self.accepted(dict(commands)[ports.DRAFT_ACCEPT_STAGE]), [PENDING_TWO, PENDING_THREE])
+        self.assertEqual([item["component_guid"] for item in report["gui_not_covered"]["excluded_widescreen"]],
+                         [PENDING_WIDE])
+
+    def test_the_log_names_every_component_that_is_not_installed_as_an_error(self):
+        _, report, error = self.run_lane(converted=self.blocks(three_depends_on_two=True, two_gaps=1))
+        self.assertIsNone(error)
+        report[ports.LANE_ERRORS_KEY] = ports.lane_errors(report)
         log = io.StringIO()
         with contextlib.redirect_stderr(log):
             ports.print_diagnostics(report)
         text = log.getvalue()
-        self.assertIn("3 component(s) DESELECTED pending human review", text)
-        for name, guid in (("Mod Two", PENDING_TWO), ("Mod Three", PENDING_THREE), ("Wide One", PENDING_WIDE)):
-            self.assertIn("deselected pending review: " + name + " [" + guid + "]", text)
+        self.assertIn("generated drafts accepted for install: 1; not installable: 1", text)
+        self.assertIn("::error::ports: NOT INSTALLED Mod Two [" + PENDING_TWO + "] (draft_not_acceptable)", text)
+        self.assertIn("::error::ports: NOT INSTALLED Mod Three [" + PENDING_THREE + "]", text)
+        self.assertIn("::error::ports: the guide was NOT installed to spec: 2 component(s) not installed", text)
+        self.assertNotIn("::warning::", text)
 
-    def test_hand_authored_skips_are_not_counted_as_pending_review(self):
-        report = {}
-        ports.coverage(*self.coverage_inputs(), report, "rust", [
-            {"section": "Mod List", "heading": "Mod Two", "reason": "reviewed", "urls": [],
-             "source": "lane_skips"}])
-        self.assertNotIn("deselected_pending_review", report)
 
-    def coverage_inputs(self):
+class DraftRefusalTests(unittest.TestCase):
+    def component(self, **review):
+        result = {"ComponentGuid": PENDING_TWO, "UnparsedGaps": [], "ConditionalDrafts": [], "RejectedDrafts": 0}
+        result.update(review.pop("Result", {}))
+        return {"Guid": PENDING_TWO, "DraftReview": {"RequiresReview": True, "Result": result, **review}}
+
+    def test_a_clean_draft_is_acceptable(self):
+        self.assertIsNone(ports.draft_refusal(self.component()))
+
+    def test_every_condition_mark_reviewed_refuses_is_refused(self):
+        for component, expected in (
+                ({"Guid": PENDING_TWO, "InstallationWarning": ports.REVIEW_FLAG}, "without a generated draft review"),
+                (self.component(Resolution={}), "saved resolution"),
+                (self.component(Result={"ComponentGuid": PENDING_ONE}), "belong to another component"),
+                (self.component(Result={"UnparsedGaps": ["a", "b"]}), "2 unparsed gap(s): a; b"),
+                (self.component(Result={"ConditionalDrafts": ["if Steam"]}), "1 conditional draft(s)"),
+                (self.component(Result={"RejectedDrafts": 3}), "3 rejected draft instruction(s)")):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, ports.draft_refusal(component))
+
+
+class LaneVerdictMainTests(unittest.TestCase):
+    def run_main(self, fill):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, root)
+        for name in ("source", "game", "archives", "content/k2"):
+            (root / name).mkdir(parents=True)
+        (root / "content/k2/full.md").write_text("x", encoding="utf-8")
+
+        def fake_execute(args, report):
+            fill(report)
+            report["status"] = "installed"
+            report["reason"] = "native_install_command_succeeded"
+
+        argv = ["--implementation", "rust", "--mode", "cli", "--source", str(root / "source"),
+                "--guide", str(root / "content/k2/full.md"), "--game-dir", str(root / "game"),
+                "--archives", str(root / "archives"), "--work-dir", str(root / "work"),
+                "--report", str(root / "out/report.json")]
+        with mock.patch.object(ports, "execute", fake_execute), mock.patch.object(ports, "print_diagnostics"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = ports.main(argv)
+        return code, json.loads((root / "out/report.json").read_text(encoding="utf-8"))
+
+    def record(self, guid, severity, source="lane_skips"):
+        return {"component_guid": guid, "heading": guid, "severity": severity, "source": source,
+                "reason": "r", "status": "x"}
+
+    def test_unavailable_archives_alone_are_warnings_and_the_lane_passes_as_partial(self):
+        for source in ("archive_unavailable", "restore_report"):
+            with self.subTest(source=source):
+                code, report = self.run_main(lambda report: report.update(skipped_by_reviewed_policy=[
+                    self.record(PENDING_ONE, "warning", source)]))
+                self.assertEqual(code, 0)
+                self.assertEqual(report["status"], "partial")
+                self.assertIs(report["partial"], True)
+                self.assertEqual(report["omitted_components"], [
+                    {"component_guid": PENDING_ONE, "heading": PENDING_ONE, "source": source, "reason": "r"}])
+                self.assertEqual(report["reason"], "native_install_command_succeeded")
+                self.assertEqual(report["lane_errors"]["count"], 0)
+
+    def test_a_guide_sanctioned_warning_skip_is_a_full_install(self):
+        code, report = self.run_main(lambda report: report.update(skipped_by_reviewed_policy=[
+            self.record(PENDING_ONE, "warning")]))
+        self.assertEqual(code, 0)
+        self.assertEqual(report["status"], "installed")
+        self.assertIs(report["partial"], False)
+        self.assertEqual(report["omitted_components"], [])
+
+    def test_errors_outrank_partial(self):
+        code, report = self.run_main(lambda report: report.update(
+            skipped_by_reviewed_policy=[self.record(PENDING_ONE, "warning", "archive_unavailable")],
+            quarantined_install_failures=[{"component_guid": PENDING_TWO}]))
+        self.assertEqual(code, 1)
+        self.assertEqual(report["status"], "incomplete")
+        self.assertIs(report["partial"], True)
+
+    def test_a_partial_lane_says_so_last_and_reports_no_failure(self):
+        report = {"status": "partial", "failure": {"stage": "install", "exit_code": 1},
+                  "omitted_components": [{"component_guid": PENDING_ONE}],
+                  "skipped_by_reviewed_policy": [self.record(PENDING_ONE, "warning", "archive_unavailable")]}
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            ports.print_diagnostics(report)
+        lines = stderr.getvalue().splitlines()
+        self.assertTrue(lines[0].startswith("::warning::ports: DESELECTED"), lines)
+        self.assertTrue(lines[-1].startswith("::warning title=partial install::ports: finished PARTIAL: 1 "),
+                        lines)
+        self.assertFalse(any(line.startswith("::error::") for line in lines), lines)
+
+    def test_an_error_deselection_fails_the_lane_after_the_install(self):
+        code, report = self.run_main(lambda report: report.update(skipped_by_reviewed_policy=[
+            self.record(PENDING_ONE, "warning", "archive_unavailable"), self.record(PENDING_TWO, "error")]))
+        self.assertEqual(code, 1)
+        self.assertEqual(report["status"], "incomplete")
+        self.assertEqual(report["install_reason"], "native_install_command_succeeded")
+        self.assertTrue(report["reason"].startswith("install_incomplete: 1 component(s) not installed"))
+
+    def test_a_quarantine_or_an_unresolved_binding_fails_the_lane(self):
+        for fill in (
+                lambda report: report.update(quarantined_install_failures=[{"component_guid": PENDING_ONE}]),
+                lambda report: report.update(bind_diagnostics=[{"component_guid": PENDING_ONE, "kind": "x",
+                                                                "reason": "unresolved"}])):
+            with self.subTest(fill=fill):
+                code, report = self.run_main(fill)
+                self.assertEqual(code, 1)
+                self.assertEqual(report["status"], "incomplete")
+
+
+class UnavailableArchiveReportTests(unittest.TestCase):
+    URL = "https://example.invalid/files/2-two/"
+
+    def test_a_restore_unavailable_step_and_its_dependents_are_deselected_as_warnings(self):
+        import cache
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(__import__("shutil").rmtree, directory)
         guide = directory / "full.md"
-        guide.write_text(GUIDE_PENDING, encoding="utf-8")
+        guide.write_text(GUIDE.replace("### Mod Two\n", "### Mod Two\n\n[two](" + self.URL + ")\n"),
+                         encoding="utf-8")
+        restore = {"ok": True, "entries": []}
+        entry = {"url": self.URL, "status": "unresolved", "reason": "HTTP 404"}
+        with mock.patch.object(cache, "warn"):
+            self.assertTrue(cache.mark_unavailable(entry, {"url": self.URL, "guides": [guide]}, restore))
+        path = directory / "restore.json"
+        path.write_text(json.dumps(restore), encoding="utf-8")
+        skip, = ports.load_policy_skips(path, guide.resolve())
+        self.assertEqual(skip, {"section": "Mod List", "heading": "Mod Two", "reason": "HTTP 404",
+                                "urls": [self.URL], "source": "archive_unavailable", "severity": "warning"})
         converted = directory / "converted.toml"
         converted.write_text(document(
-            component("Mod One", PENDING_ONE), component("Mod Two", PENDING_TWO),
-            component("Mod Three", PENDING_THREE), component("Wide One", PENDING_WIDE)), encoding="utf-8")
-        return guide, converted
-
-    def test_a_dependent_that_is_not_deselected_blocks(self):
-        table = {"k1": [pending_entry("Mod Two", PENDING_TWO)]}
-        _, _, error = self.run_lane(table, converted=self.blocks(three_depends_on_two=True))
-        self.assertEqual(error, "policy_skipped_component_has_dependents")
-
-    def test_a_dependent_that_is_deselected_with_it_passes_and_is_reported_by_kind(self):
-        table = {"k1": [pending_entry("Mod Two", PENDING_TWO),
-                        pending_entry("Mod Three", PENDING_THREE, kind="dependent_of_deselected"),
-                        pending_entry("Wide One", PENDING_WIDE,
-                                      section="Enhanced Widescreen Support Mods")]}
-        commands, report, error = self.run_lane(table, converted=self.blocks(three_depends_on_two=True))
-        self.assertIsNone(error)
-        self.assertEqual(report["deselected_pending_review"]["by_kind"],
-                         {"unreviewed_draft": 2, "dependent_of_deselected": 1})
-        self.assertEqual(self.deselected(dict(commands)["install"]), [PENDING_TWO, PENDING_THREE, PENDING_WIDE])
-
-    def test_a_pinned_guid_that_differs_from_the_converted_component_blocks(self):
-        table = self.all_pending()
-        table["k1"][0] = pending_entry("Mod Two", "80000000-0000-0000-0000-0000000000ff")
-        commands, _, error = self.run_lane(table)
-        self.assertEqual(error, "policy_skipped_guid_mismatch")
-        self.assertNotIn("validate", dict(commands))
-
-    def test_gui_lane_reports_a_skipped_widescreen_draft_as_skipped_not_excluded(self):
-        commands, report, error = self.run_lane(self.all_pending(), mode="gui")
-        self.assertEqual(error, "gui_completion_report_missing")
-        self.assertEqual(report["gui_not_covered"]["excluded_widescreen"], [])
-        driver = dict(commands)["gui"]
-        self.assertEqual(self.deselected(driver), [PENDING_TWO, PENDING_THREE, PENDING_WIDE])
-
-    def test_gui_lane_without_the_widescreen_entry_excludes_it_and_still_passes_the_gate(self):
-        table = self.all_pending()
-        table["k1"] = table["k1"][:2]
-        _, report, error = self.run_lane(table, mode="gui")
-        self.assertEqual(error, "gui_completion_report_missing")
-        self.assertEqual([item["component_guid"] for item in report["gui_not_covered"]["excluded_widescreen"]],
-                         [PENDING_WIDE])
-
-    def test_malformed_pins_block_the_table(self):
-        good = pending_entry("Mod Two", PENDING_TWO)
-        for entry in (
-            {key: value for key, value in good.items() if key != "kind"},
-            {key: value for key, value in good.items() if key != "guid"},
-            {**good, "kind": "approved"},
-            {**good, "guid": "80000000-0000-0000-0000-0000000000AB"},
-            {**good, "guid": "not-a-guid"},
-            {**good, "guid": 7},
-        ):
-            with self.subTest(entry=entry):
-                path = lane_skips_file(Path(tempfile.mkdtemp()), {"k1": [entry]})
-                self.addCleanup(__import__("shutil").rmtree, path.parent)
-                with self.assertRaisesRegex(ports.Blocked, "lane_skips_invalid"):
-                    ports.load_lane_skips("k1", path)
-
-    def test_two_entries_pinning_one_guid_block_the_table(self):
-        path = lane_skips_file(Path(tempfile.mkdtemp()), {"k1": [
-            pending_entry("Mod Two", PENDING_TWO), pending_entry("Mod Three", PENDING_TWO)]})
-        self.addCleanup(__import__("shutil").rmtree, path.parent)
-        with self.assertRaisesRegex(ports.Blocked, "lane_skips_duplicate"):
-            ports.load_lane_skips("k1", path)
+            component("Mod One", "40000000-0000-0000-0000-000000000001").replace(
+                "IsSelected = false", 'IsSelected = false\nDependencies = ["40000000-0000-0000-0000-000000000002"]'),
+            "[[thisMod]]\nGuid = \"40000000-0000-0000-0000-000000000002\"\nName = \"Mod Two\"\n"),
+            encoding="utf-8")
+        report = {}
+        ports.coverage(guide, converted, report, "rust", [skip])
+        self.assertEqual([(record["heading"], record["source"], record["severity"], record.get("kind"))
+                          for record in report["skipped_by_reviewed_policy"]],
+                         [("Mod Two", "archive_unavailable", "warning", None),
+                          ("Mod One", "archive_unavailable", "warning", "dependent_of_deselected")])
+        self.assertEqual(ports.lane_errors(report)["count"], 0)
 
 
 class RealGuideFourGbSkipTests(unittest.TestCase):
     ROOT = Path(ports.__file__).resolve().parents[2] / "content"
 
-    def converted_from_guide(self, directory, guide, pinned=()):
-        section = None
+    def converted_from_guide(self, directory, guide, uninstructed=(FOUR_GB,), implementation="rust"):
         blocks = []
-        self.guid = None
-        pins = {(skip["section"], skip["heading"]): skip["guid"] for skip in pinned}
-        for line in guide.read_text(encoding="utf-8").splitlines():
-            if line.startswith("## "):
-                section = line[3:].strip()
-            elif line.startswith("### ") and section in (
-                    "Mod List", "Optional Widescreen & Extended Widescreen Support Mods",
-                    "Enhanced Widescreen Support Mods"):
-                heading = line[4:].strip()
-                guid = pins.get((section, heading), "70000000-0000-0000-0000-%012d" % len(blocks))
-                if (section, heading) == FOUR_GB:
-                    self.guid = guid
-                    blocks.append("\n".join(["[[thisMod]]", 'Guid = "' + guid + '"',
-                                             'Name = "' + heading + '"', "IsSelected = true"]))
-                else:
-                    blocks.append(component(heading.replace('"', "'"), guid))
+        self.guids = {}
+        steps, _, _ = ports.guide_step_list(guide.read_text(encoding="utf-8"), implementation)
+        for section, heading in steps:
+            guid = "70000000-0000-0000-0000-%012d" % len(blocks)
+            self.guids[(section, heading)] = guid
+            if (section, heading) in uninstructed:
+                blocks.append("\n".join(["[[thisMod]]", 'Guid = "' + guid + '"',
+                                         'Name = "' + heading + '"', "IsSelected = true"]))
+            else:
+                blocks.append(component(heading.replace('"', "'"), guid))
         path = directory / "converted.toml"
         path.write_text(document(*blocks), encoding="utf-8")
         return path
 
-    def test_the_4gb_patcher_is_the_only_hand_authored_exempt_step_in_both_real_guides(self):
+    def test_the_4gb_patcher_is_the_only_hand_authored_rust_skip_in_both_real_guides(self):
         for game in ("k1", "k2"):
             with self.subTest(game=game):
                 directory = Path(tempfile.mkdtemp())
                 self.addCleanup(__import__("shutil").rmtree, directory)
                 guide = self.ROOT / game / "full.md"
                 converted = self.converted_from_guide(directory, guide)
-                with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-                    ports.coverage(guide, converted, {}, "rust", [])
-                skips = [skip for skip in ports.load_lane_skips(guide.parent.name, SHIPPED_LANE_SKIPS)
-                         if "guid" not in skip]
+                report = {}
+                self.assertTrue(ports.coverage(guide, converted, report, "rust", []))
+                record, = report["skipped_by_reviewed_policy"]
+                self.assertEqual((record["section"], record["heading"], record["component_guid"],
+                                  record["source"], record["severity"]),
+                                 (*FOUR_GB, self.guids[FOUR_GB], "no_instructions", "error"))
+                skips = ports.load_lane_skips(guide.parent.name, SHIPPED_LANE_SKIPS)
                 report = {}
                 self.assertTrue(ports.coverage(guide, converted, report, "rust", skips))
                 record, = report["skipped_by_reviewed_policy"]
-                self.assertEqual((record["section"], record["heading"], record["component_guid"]),
-                                 (*FOUR_GB, self.guid))
+                self.assertEqual((record["section"], record["heading"], record["component_guid"],
+                                  record["source"], record["severity"]),
+                                 (*FOUR_GB, self.guids[FOUR_GB], "lane_skips", "warning"))
 
-    def test_every_shipped_skip_resolves_to_one_counted_step_with_its_pinned_guid(self):
-        expected = {"k1": 151, "k2": 120}
-        for game in ("k1", "k2"):
-            with self.subTest(game=game):
+    def test_every_shipped_skip_resolves_to_one_step_of_its_real_guide_with_its_severity(self):
+        expected = {("k1", "rust"): 1, ("k2", "rust"): 1, ("k1", "typescript"): 7, ("k2", "typescript"): 24}
+        for (game, implementation), count in expected.items():
+            with self.subTest(game=game, implementation=implementation):
                 directory = Path(tempfile.mkdtemp())
                 self.addCleanup(__import__("shutil").rmtree, directory)
                 guide = self.ROOT / game / "full.md"
-                skips = ports.load_lane_skips(game, SHIPPED_LANE_SKIPS)
-                converted = self.converted_from_guide(
-                    directory, guide, [skip for skip in skips if "guid" in skip])
+                skips = ports.load_lane_skips(game, SHIPPED_LANE_SKIPS, implementation)
+                self.assertEqual(len(skips), count)
+                converted = self.converted_from_guide(directory, guide, uninstructed=(),
+                                                        implementation=implementation)
                 report = {}
-                self.assertTrue(ports.coverage(guide, converted, report, "rust", skips))
-                self.assertEqual(len(report["skipped_by_reviewed_policy"]), expected[game])
-                self.assertTrue(all(record["component_guid"] for record in report["skipped_by_reviewed_policy"]))
-                pending = report["deselected_pending_review"]
-                self.assertEqual(pending["count"], expected[game] - 1)
-                self.assertEqual(pending["count"], len(pending["components"]))
+                self.assertTrue(ports.coverage(guide, converted, report, implementation, skips))
+                records = report["skipped_by_reviewed_policy"]
+                self.assertEqual([(record["section"], record["heading"], record["severity"])
+                                  for record in records],
+                                 [(skip["section"], skip["heading"], skip["severity"]) for skip in skips])
+                self.assertEqual([record["component_guid"] for record in records],
+                                 [self.guids[(skip["section"], skip["heading"])] for skip in skips])
+                # Only the guide-sanctioned 4GB Patcher is a warning; every other skip fails the lane.
+                self.assertEqual({(record["section"], record["heading"]) for record in records
+                                  if record["severity"] == "warning"}, {FOUR_GB})
 
 
 QUARANTINE_GUIDE = "# Guide\n\n## Mod List\n\n" + "".join(
@@ -2613,7 +2811,7 @@ class ValidateQuarantineTests(unittest.TestCase):
                 self.assertEqual(report["quarantined_validate_failures"], [])
                 self.assertEqual(report["quarantine"]["stopped"]["reason"], reason)
 
-    def test_the_log_and_the_report_list_every_quarantined_component_as_warnings(self):
+    def test_the_log_and_the_report_list_every_quarantined_component_as_errors(self):
         converted = quarantine_document(dependencies={7: [quarantine_guid(5)]})
         _, report, error = self.run_lane([validate_error("Mod 05")], converted=converted)
         self.assertIsNone(error)
@@ -2621,14 +2819,14 @@ class ValidateQuarantineTests(unittest.TestCase):
         with contextlib.redirect_stderr(log):
             ports.print_diagnostics(report)
         text = log.getvalue()
-        self.assertIn("::warning::ports: 2 component(s) QUARANTINED after validate failures "
+        self.assertIn("::error::ports: 2 component(s) QUARANTINED after validate failures "
                       "(1 failing, 1 dependent(s))", text)
-        self.assertIn("PARTIAL install", text)
-        self.assertIn("::warning::ports: quarantined Mod 05 [" + quarantine_guid(5)
+        self.assertIn("the rest of the guide was installed", text)
+        self.assertIn("::error::ports: quarantined Mod 05 [" + quarantine_guid(5)
                       + "]: validate failed at step 2 (Patcher): Error: Mod 05 / step 2 (Patcher):", text)
-        self.assertIn("::warning::ports: quarantined Mod 07 [" + quarantine_guid(7)
+        self.assertIn("::error::ports: quarantined Mod 07 [" + quarantine_guid(7)
                       + "]: depends on quarantined " + quarantine_guid(5), text)
-        self.assertNotIn("::error::", text)
+        self.assertNotIn("::warning::", text)
 
     def test_a_refused_quarantine_is_an_error_line_with_the_component_and_step(self):
         _, report, _ = self.run_lane([validate_error("Not In The Guide")])
@@ -3004,7 +3202,7 @@ class InstallQuarantineTests(unittest.TestCase):
         self.assertTrue((game / "link").is_symlink())
         self.assertFalse((game / "extra").exists())
 
-    def test_the_log_lists_every_install_quarantine_as_a_warning(self):
+    def test_the_log_lists_every_install_quarantine_as_an_error(self):
         converted = quarantine_document(dependencies={7: [quarantine_guid(5)]})
         _, report, error = self.run_lane(install_failures=[install_error("Mod 05")], converted=converted)
         self.assertIsNone(error)
@@ -3012,15 +3210,16 @@ class InstallQuarantineTests(unittest.TestCase):
         with contextlib.redirect_stderr(log):
             ports.print_diagnostics(report)
         text = log.getvalue()
-        self.assertIn("::warning::ports: 2 component(s) QUARANTINED after install failures "
+        self.assertIn("::error::ports: 2 component(s) QUARANTINED after install failures "
                       "(1 failing, 1 dependent(s))", text)
-        self.assertIn("PARTIAL install", text)
-        self.assertIn("::warning::ports: quarantined Mod 05 [" + quarantine_guid(5)
+        self.assertIn("the rest of the guide was installed", text)
+        self.assertIn("::error::ports: quarantined Mod 05 [" + quarantine_guid(5)
                       + "]: install failed at step 2 (Patcher): Error: Install stopped.", text)
-        self.assertIn("::warning::ports: quarantined Mod 07 [" + quarantine_guid(7)
+        self.assertIn("::error::ports: quarantined Mod 07 [" + quarantine_guid(7)
                       + "]: depends on quarantined " + quarantine_guid(5), text)
         self.assertNotIn("after validate failures", text)
-        self.assertNotIn("::error::", text)
+        # Only the unrelated engine-restore fallback may warn; no quarantine line does.
+        self.assertNotRegex(text, r"::warning::ports: (quarantined|\d+ component\(s\) QUARANTINED)")
 
     def test_validate_and_install_warnings_are_separate_blocks(self):
         _, report, _ = self.run_lane(
@@ -3337,7 +3536,7 @@ class QuarantineMainTests(unittest.TestCase):
         self.assertEqual(written["reason"], "install_failed")
         self.assertEqual(written["failure"]["component"], "Mod 09")
         self.assertEqual(written["quarantined_validate_failures"][0]["component_guid"], quarantine_guid(5))
-        self.assertIn("::warning::ports: 1 component(s) QUARANTINED", stderr.getvalue())
+        self.assertIn("::error::ports: 1 component(s) QUARANTINED", stderr.getvalue())
         self.assertIn("::error::ports: install failed (exit 1): component 'Mod 09', step 2 (Patcher)",
                       stderr.getvalue())
 
@@ -4141,9 +4340,9 @@ class TypeScriptValidateQuarantineTests(unittest.TestCase):
         with contextlib.redirect_stderr(stderr):
             ports.print_diagnostics(report)
         text = stderr.getvalue()
-        self.assertIn("::warning::ports: 2 component(s) QUARANTINED after validate failures", text)
-        self.assertIn("PARTIAL install", text)
-        self.assertIn("::warning::ports: quarantined Mod 03 [", text)
+        self.assertIn("::error::ports: 2 component(s) QUARANTINED after validate failures", text)
+        self.assertIn("the rest of the guide was installed", text)
+        self.assertIn("::error::ports: quarantined Mod 03 [", text)
         self.assertNotIn("step None", text)
 
     def test_the_gui_input_leaves_the_quarantined_components_unselected(self):
@@ -4835,7 +5034,7 @@ class TypeScriptInstallQuarantineTests(unittest.TestCase):
         self.assertEqual((entry["name"], entry["stage"]), ("Mod 06", "install_widescreen"))
         self.assertNotIn(quarantine_guid(6), self.selected(dict(commands)["install_widescreen_retry_1"]))
 
-    def test_the_log_lists_the_quarantine_as_warnings_for_a_partial_install(self):
+    def test_the_log_lists_the_quarantine_as_errors_after_installing_the_rest(self):
         converted = ts_document(dependencies={7: [quarantine_guid(5)]})
         _, report, error = self.run_lane([ts_install_log(5)], converted=converted)
         self.assertIsNone(error)
@@ -4843,14 +5042,14 @@ class TypeScriptInstallQuarantineTests(unittest.TestCase):
         with contextlib.redirect_stderr(stderr):
             ports.print_diagnostics(report)
         text = stderr.getvalue()
-        self.assertIn("::warning::ports: 2 component(s) QUARANTINED after install failures (1 failing, "
+        self.assertIn("::error::ports: 2 component(s) QUARANTINED after install failures (1 failing, "
                       "1 dependent(s))", text)
-        self.assertIn("PARTIAL install", text)
-        self.assertIn("::warning::ports: quarantined Mod 05 [" + quarantine_guid(5)
+        self.assertIn("the rest of the guide was installed", text)
+        self.assertIn("::error::ports: quarantined Mod 05 [" + quarantine_guid(5)
                       + "]: install failed at step 2 (Patcher): ERROR: Instruction", text)
-        self.assertIn("::warning::ports: quarantined Mod 07 [" + quarantine_guid(7)
+        self.assertIn("::error::ports: quarantined Mod 07 [" + quarantine_guid(7)
                       + "]: depends on quarantined " + quarantine_guid(5), text)
-        self.assertNotIn("::error::", text)
+        self.assertNotIn("::warning::", text)
 
     def test_a_guid_owned_by_another_component_than_the_progress_line_refuses_the_pass(self):
         commands, report, error = self.run_lane([ts_install_log(5, instruction=9)])
@@ -4996,7 +5195,8 @@ NO_INSTRUCTIONS_GUID = "40000000-0000-0000-0000-000000000002"
 
 def bind_skip(**override):
     skip = {"section": "Mod List", "heading": "Mod Two", "reason": "reviewed: test", "urls": [],
-            "source": "lane_skips", "lane": "rust", "bind_diagnostic": "loose_file_unresolved"}
+            "source": "lane_skips", "severity": "error", "lane": "rust",
+            "bind_diagnostic": "loose_file_unresolved"}
     skip.update(override)
     return skip
 
@@ -5029,28 +5229,32 @@ class BindDiagnosticTests(unittest.TestCase):
         return ports.coverage(self.guide, self.converted(**options), report, "rust",
                               [bind_skip()] if skips is None else skips)
 
-    def test_a_confirmed_diagnostic_lets_the_reviewed_skip_cover_the_gap_visibly(self):
+    def test_a_confirmed_diagnostic_lets_the_reviewed_skip_deselect_the_component_as_an_error(self):
         report = {ports.BIND_DIAGNOSTICS_KEY: [bind_entry()]}
         self.assertEqual(self.coverage(report), 2)
         record, = report["skipped_by_reviewed_policy"]
-        self.assertEqual((record["component_guid"], record["bind_diagnostic_reason"]),
-                         (NO_INSTRUCTIONS_GUID, UNRESOLVED_REASON))
+        self.assertEqual((record["component_guid"], record["bind_diagnostic_reason"], record["source"],
+                          record["severity"]),
+                         (NO_INSTRUCTIONS_GUID, UNRESOLVED_REASON, "lane_skips", "error"))
         self.assertNotIn("unapplied_bind_skips", report)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             ports.print_diagnostics(report)
-        self.assertIn("::warning::ports: OMITTED Mod Two [" + NO_INSTRUCTIONS_GUID + "]", stderr.getvalue())
-        self.assertIn("PARTIAL install", stderr.getvalue())
+        self.assertIn("::error::ports: NOT INSTALLED Mod Two [" + NO_INSTRUCTIONS_GUID + "] (lane_skips): "
+                      "reviewed: test; converter diagnostic: " + UNRESOLVED_REASON, stderr.getvalue())
+        self.assertEqual(ports.lane_errors(report)["not_installed"], 1)
 
-    def test_without_the_diagnostic_the_coverage_gap_still_blocks(self):
+    def test_without_the_diagnostic_the_coverage_gap_is_a_no_instructions_error(self):
         for label, entries in (("none", []), ("other kind", [bind_entry("patcher_unresolved")]),
                                ("other component", [bind_entry(guid="40000000-0000-0000-0000-000000000009")])):
             with self.subTest(label):
                 report = {ports.BIND_DIAGNOSTICS_KEY: entries}
-                with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-                    self.coverage(report)
+                self.assertEqual(self.coverage(report), 2)
                 self.assertEqual(report["unapplied_bind_skips"][0]["state"], "unconfirmed")
-                self.assertEqual(report["skipped_by_reviewed_policy"], [])
+                record, = report["skipped_by_reviewed_policy"]
+                self.assertEqual((record["component_guid"], record["source"], record["severity"]),
+                                 (NO_INSTRUCTIONS_GUID, "no_instructions", "error"))
+                self.assertNotIn("bind_diagnostic_reason", record)
 
     def test_a_skip_never_drops_a_component_that_now_has_instructions(self):
         report = {}
@@ -5062,10 +5266,14 @@ class BindDiagnosticTests(unittest.TestCase):
             ports.print_diagnostics(report)
         self.assertIn("NOT skipped; remove the entry", stderr.getvalue())
 
-    def test_a_dependent_of_the_omitted_component_still_blocks(self):
+    def test_a_dependent_of_the_omitted_component_is_deselected_with_it_as_an_error(self):
         report = {ports.BIND_DIAGNOSTICS_KEY: [bind_entry()]}
-        with self.assertRaisesRegex(ports.Blocked, "policy_skipped_component_has_dependents"):
-            self.coverage(report, dependent=True)
+        self.assertEqual(self.coverage(report, dependent=True), 2)
+        self.assertEqual([(record["heading"], record["component_guid"], record["severity"], record.get("kind"),
+                           record.get("caused_by")) for record in report["skipped_by_reviewed_policy"]],
+                         [("Mod Two", NO_INSTRUCTIONS_GUID, "error", None, None),
+                          ("Mod One", "40000000-0000-0000-0000-000000000001", "error",
+                           "dependent_of_deselected", NO_INSTRUCTIONS_GUID)])
 
     def test_a_bind_skip_for_a_step_the_converter_does_not_count_blocks(self):
         report = {ports.BIND_DIAGNOSTICS_KEY: [bind_entry()]}
@@ -5074,8 +5282,7 @@ class BindDiagnosticTests(unittest.TestCase):
 
     def test_the_failure_names_each_steps_bind_diagnostic(self):
         report = {ports.BIND_DIAGNOSTICS_KEY: [bind_entry()]}
-        with self.assertRaisesRegex(ports.Blocked, "guide_steps_without_instructions"):
-            self.coverage(report, [])
+        self.assertEqual(self.coverage(report, []), 2)
         step, = report["steps_without_instructions"]
         self.assertEqual(step["bind_diagnostic"], UNRESOLVED_REASON)
         stderr = io.StringIO()
@@ -5131,15 +5338,12 @@ class BindDiagnosticTests(unittest.TestCase):
                 with self.assertRaisesRegex(ports.Blocked, "lane_skips_invalid"):
                     ports.load_lane_skips("k2", bad)
 
-    def test_the_shipped_k2_table_omits_one_component_from_the_rust_lane_only(self):
-        rust = [skip for skip in ports.load_lane_skips("k2", SHIPPED_LANE_SKIPS) if "bind_diagnostic" in skip]
-        self.assertEqual([(skip["section"], skip["bind_diagnostic"]) for skip in rust],
-                         [("Mod List", "loose_file_unresolved")])
-        self.assertIn("partial install", rust[0]["reason"])
-        self.assertFalse([skip for skip in ports.load_lane_skips("k2", SHIPPED_LANE_SKIPS, "typescript")
-                          if "bind_diagnostic" in skip])
-        self.assertFalse([skip for skip in ports.load_lane_skips("k1", SHIPPED_LANE_SKIPS)
-                          if "bind_diagnostic" in skip])
+    def test_the_shipped_tables_omit_no_unresolved_binding_from_any_lane(self):
+        for game in ("k1", "k2"):
+            for implementation in ("rust", "typescript"):
+                with self.subTest(game=game, implementation=implementation):
+                    self.assertFalse([skip for skip in ports.load_lane_skips(game, SHIPPED_LANE_SKIPS, implementation)
+                                      if "bind_diagnostic" in skip])
 
 
 class GuiInstallQuarantineTests(unittest.TestCase):
@@ -5524,32 +5728,6 @@ class GameChangeTests(unittest.TestCase):
         before = ports.game_file_state(root)
         (root / "dialog.tlk").write_bytes(b"three")
         self.assertNotEqual(before, ports.game_file_state(root))
-
-
-class PendingReviewMainTests(unittest.TestCase):
-    def test_an_install_with_components_deselected_pending_review_is_partial_and_fails(self):
-        root = Path(tempfile.mkdtemp())
-        self.addCleanup(__import__("shutil").rmtree, root)
-        for name in ("source", "game", "archives", "content/k2"):
-            (root / name).mkdir(parents=True)
-        (root / "content/k2/full.md").write_text("x", encoding="utf-8")
-
-        def fake_execute(args, report):
-            report[ports.PENDING_REVIEW_KEY] = {"count": 2, "by_kind": {}, "components": []}
-            report["status"] = "installed"
-            report["reason"] = "native_install_command_succeeded"
-
-        argv = ["--implementation", "rust", "--mode", "cli", "--source", str(root / "source"),
-                "--guide", str(root / "content/k2/full.md"), "--game-dir", str(root / "game"),
-                "--archives", str(root / "archives"), "--work-dir", str(root / "work"),
-                "--report", str(root / "out/report.json")]
-        with mock.patch.object(ports, "execute", fake_execute), mock.patch.object(ports, "print_diagnostics"), \
-                contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(ports.main(argv), 1)
-        written = json.loads((root / "out/report.json").read_text(encoding="utf-8"))
-        self.assertEqual(written["status"], "partial")
-        self.assertEqual(written["install_reason"], "native_install_command_succeeded")
-        self.assertTrue(written["reason"].startswith("deselected_pending_review: 2 component(s)"))
 
 
 if __name__ == "__main__":

@@ -50,6 +50,9 @@ PIN_EXTENSIONS = ("zip", "7z", "rar", LOOSE)
 SHA256 = re.compile(r"[a-f0-9]{64}")
 UNCACHED = "uncached-by-policy"
 UNCACHED_SKIPPED = "uncached-skipped"
+UNAVAILABLE = "unavailable"
+# Failure reasons that mean the download needs a (re-)reviewed selection, not that it is missing.
+REVIEW_NEEDED = ("archive_selections.json", "reviewed loose selection")
 OVER_LIMIT = "over-cache-limit"
 PAGE_UNAVAILABLE = ("landing page returned no download links after retries; "
                     "transient page variance or removed file, not a selection mismatch")
@@ -278,6 +281,29 @@ def skippable_steps(item, allowances):
     outside = [step for step in steps if step["heading"] is None or not (
         step["section"] in sections or (step["section"], step["heading"]) in steps_allowed)]
     return steps, outside
+
+
+def mark_unavailable(entry, item, report):
+    """--deselect-unavailable: record a link no source could provide as an unavailable step skip.
+
+    Every guide step that references it is listed in report["unavailable_steps"] so ports.py
+    deselects those components (and their dependents) with a warning. A link referenced outside
+    any `###` step cannot be tied to a component, so it stays a failure. So does a download that
+    worked but matched no reviewed selection (REVIEW_NEEDED): the archive is obtainable, and which
+    file the guide means is a review error, not a missing download. Returns True when marked.
+    """
+    reason = entry.get("reason") or "not obtainable from any source"
+    if entry.get("status") != UNCACHED and any(marker in reason for marker in REVIEW_NEEDED):
+        return False
+    steps = referencing_steps(item)
+    if not steps or any(step["heading"] is None for step in steps):
+        return False
+    entry.update(status=UNAVAILABLE, unavailable_steps=steps)
+    report.setdefault("unavailable_steps", []).extend(
+        {**step, "url": entry["url"], "reason": reason} for step in steps)
+    warn("archive unavailable (%s): %s; deselecting %s" % (
+        entry["url"], reason, ", ".join(repr(step["heading"]) for step in steps)))
+    return True
 
 
 def atomic_json(path, value):
@@ -2319,7 +2345,14 @@ def main(argv=None):
                              "references it is covered by this value (repeatable): a '##' section name "
                              "covers all of its '###' steps, '<## section>::<### heading>' covers only "
                              "that one step; the lane must not install what is named")
+    parser.add_argument("--deselect-unavailable", action="store_true",
+                        help="restore only: a link no source can provide (or an uncached-by-policy link no "
+                             "--allow-uncached-by-policy covers) is a warning, not a failure, when every "
+                             "reference to it is inside a '###' step; those steps are listed in the report's "
+                             "unavailable_steps for ports.py to deselect")
     args = parser.parse_args(argv)
+    if args.deselect_unavailable and args.command != "restore":
+        parser.error("--deselect-unavailable is only valid with restore")
     if args.allow_uncached_by_policy and args.command != "restore":
         parser.error("--allow-uncached-by-policy is only valid with restore")
     for allowance in args.allow_uncached_by_policy:
@@ -2453,6 +2486,9 @@ def main(argv=None):
                     else:
                         entry["reason"] += "; referenced outside the allowed sections or steps: " + json.dumps(
                             outside or "no guide step", sort_keys=True)
+                if (args.command == "restore" and args.deselect_unavailable
+                        and entry["status"] == UNCACHED):
+                    mark_unavailable(entry, item, report)
                 report["entries"].append(entry)
                 if args.command == "refresh" and manifest["entries"].pop(item["id"], None) is not None:
                     atomic_json(manifest_path, manifest)
@@ -2523,6 +2559,8 @@ def main(argv=None):
                     prune(root, manifest, limit, stage["hold"], stage_dir)
                     continue
                 entry.update(status="unresolved", reason=safe_reason(error))
+                if args.command == "restore" and args.deselect_unavailable:
+                    mark_unavailable(entry, item, report)
                 if args.command == "refresh" and old and not is_pinned(item, old, pins):
                     manifest["entries"][item["id"]] = {**old, "status": "stale-unknown"}
                     atomic_json(manifest_path, manifest)
@@ -2544,7 +2582,7 @@ def main(argv=None):
         if stale and args.command == "refresh":
             warn("%d archive(s) are stale-unknown (upstream metadata unavailable); the last cached copy was kept" % stale)
         accepted = ("fresh", "verified", "restored", "pinned") + (
-            (UNCACHED, OVER_LIMIT, "stale-unknown") if args.command == "refresh" else (UNCACHED_SKIPPED,) if args.command == "restore" else ())
+            (UNCACHED, OVER_LIMIT, "stale-unknown") if args.command == "refresh" else (UNCACHED_SKIPPED, UNAVAILABLE) if args.command == "restore" else ())
         report["ok"] = all(entry.get("status") in accepted
                            for entry in report["entries"]) if args.command != "discover" else True
     if args.report:

@@ -15,8 +15,12 @@ Each lane:
    that adds opt-in physical install.
 2. Restores `game-<game>-v1` (a miss fails the lane) and runs `game_cache.py
    unpack`, which verifies every file. See [steam.md](steam.md).
-3. Restores archives with `cache.py restore --archive-map`. This is best effort; a missing
-   archive fails the install step that needs it. See [cache.md](cache.md).
+3. Restores archives with `cache.py restore --archive-map --deselect-unavailable`. An archive
+   no source can provide is a warning, not a failure: every guide step that links it is listed
+   in the report's `unavailable_steps`, and `ports.py` leaves those components and their
+   dependents out (see [Deselection and the lane verdict](#deselection-and-the-lane-verdict)).
+   A link outside any `###` step, and a download that worked but matched no reviewed selection
+   in `archive_selections.json`, still fail the restore. See [cache.md](cache.md).
 4. TypeScript lanes install Wine (`wine wine64 wine32:i386`, no recommends): `Execute`
    and the legacy TSLPatcher run through `wine` outside Windows.
 5. Runs `ports.py`, passing `--review-manifest ci/<game>-<impl>-review.json` when
@@ -120,13 +124,12 @@ bare-filename and multi-archive drafts stay fenced. `ports.py` never sets
   (`component_guid`, `name`, `reason` of each draft left fenced, parsed from the
   `{cleared, skipped}` JSON the converter prints on stderr into
   `review_verified_drafts.log`). The parse is kept even when the step fails.
-- **Block before validate.** After coverage and the reviewed-policy/widescreen scope are
-  known, and before `validate`, the lane stops with `unreviewed_draft_instructions_remain:
-  <guid> (<heading>); ...` when any component it would install still has an unreviewed
-  draft. The reason and `draft_review.unreviewed` list every such component (an option
-  is listed as `Owner / Option` with its own GUID); stderr repeats them. Reviewed-policy
-  skips and, for the GUI lane, widescreen-only components excluded from it are never
-  checked.
+- **Then draft acceptance.** Every draft the verifier leaves fenced goes through
+  [Generated draft acceptance](#generated-draft-acceptance). A component the lane would
+  install that is still fenced after that stage is an internal error: the lane stops with
+  `unreviewed_draft_instructions_remain: <guid> (<heading>); ...` and
+  `draft_review.unreviewed` lists them. Deselected components and, for the GUI lane,
+  widescreen-only components excluded from it are never checked.
 - **What "installed" means here.** The CLI lane checks components with `IsSelected =
   true` (all when none is selected, as the Rust loader does) and their selected options.
   The GUI lane installs every non-skipped, non-excluded component, so it checks all of
@@ -142,8 +145,8 @@ bare-filename and multi-archive drafts stay fenced. `ports.py` never sets
   so with `aa7b355` alone nothing cleared (0 of 151 on k2; k1 was not measured). From `1c67994` it
   also accepts the `MethodContext` that `bind_loose_method` wrote, which is why the
   [archive binding pass](#archive-binding) exists. Prose drafts, patcher-method components,
-  multi-archive and unmapped components stay fenced and still stop the lane through the
-  block below.
+  multi-archive and unmapped components stay fenced here and go on to
+  [Generated draft acceptance](#generated-draft-acceptance).
 - **Measured (k2, ModSync.rs `1c67994`, real `content/k2/full.md`, synthetic one-file
   archives for the 139 uniquely mapped components, not the real archives).** The pass
   bound 40 and the review cleared 40; 111 stayed fenced. Instruction counts were unchanged
@@ -152,66 +155,69 @@ bare-filename and multi-archive drafts stay fenced. `ports.py` never sets
   available, so the real count depends on their contents (the replay must reproduce the
   bound instructions exactly) and may differ from 40.
 
-### Components deselected pending human review
+### Generated draft acceptance
 
-CI run 39136954201 stopped every Rust install lane at the `draft_review` gate: the
-review clears only drafts a replay of one hash-bound archive reproduces, so prose,
-multi-archive and executable-method drafts stayed unreviewed (k2 CLI 118, k2 GUI 113,
-k1 CLI 150, k1 GUI 142 components; the GUI lists are the CLI lists without the
-widescreen-only components it excludes, so the CLI list is the union). On the repository
-owner's explicit instruction (2026-10-18, delegating the review sign-off), those
-components are **omitted from the Rust install lanes** instead of being approved, so the
-remainder installs:
+CI run 39425722697 failed the k2 Rust CLI lane on a review gate: 118 components whose
+drafts the verifier leaves fenced (prose, multi-archive and executable-method drafts) were
+committed as `unreviewed_draft` lane skips and deselected, so the lane installed a fraction
+of the guide and then failed. Those entries and `deselect_unreviewed.py` are gone. The lane
+now installs the guide as the converter generates it (Rust lanes; stage `accept_drafts`):
 
-- They are committed `lane_skips` entries (see [Lane skips](#lane-skips-steps-that-need-no-restore-report))
-  carrying `guid` and `kind`. Nothing is reviewed or approved: the drafts keep
-  `RequiresReview = true`, the verifier is unchanged, and the lane still deselects them with
-  `--deselect <Guid>` for `validate` and `install` (and `gui_rust.py --deselect`). The
-  reason of each entry says `deselected pending human review, delegated by owner 2026-10-18`.
-- **Counts.** k1: 150 `unreviewed_draft` entries (8 are widescreen-only). k2: 118
-  `unreviewed_draft` (5 widescreen-only) plus 1 `dependent_of_deselected`, `Extended
-  Korriban Arrival`, which depends on the deselected `TSLRCM`; the Rust selection cascade
-  (`--deselect` also deselects every selected dependent) would drop it silently, so it is
-  listed. Each game also keeps its hand-authored `4GB Patcher` entry; k2 additionally
-  skips `K2 Cutscenes Rescaled` through the restore report. Measured with a
-  pre-verified-review Rust build (`validate --deselect` of the whole set on the
-  `--parse-directions` conversion of the real guides), the cascade auto-deselects only
-  components already in the set (k1: 4 of them, k2: 20), and no `Restrictions`,
-  `InstallBefore`, `InstallAfter` or option reference points at a deselected component.
-- **New drafts still block.** Only the listed GUIDs are exempt from the gate. Any other
-  component with an unreviewed draft stops the lane with
-  `unreviewed_draft_instructions_remain` exactly as before, and a pinned `guid` that no
-  longer matches the converted component blocks (`policy_skipped_guid_mismatch`), so a
-  changed converter or guide cannot silently retarget a skip.
-- **Dependents.** A skipped component with a dependent that is not itself skipped still
-  blocks (`policy_skipped_component_has_dependents`); a dependent that is skipped too
-  (every dependent of a listed component in the k1 and k2 guides except the one above) is
-  fine.
-- **Visible summary.** The lane report has `deselected_pending_review`: `count`,
-  `by_kind` (`unreviewed_draft`, `dependent_of_deselected`) and one record per component
-  (`component_guid`, `heading`, `kind`). `ports.py` repeats it on stderr in the CI log:
-  `::error::ports: N component(s) DESELECTED pending human review ... ` followed by one
-  `deselected pending review: <heading> [<guid>] (<kind>)` line per component. These
-  components are also in `skipped_by_reviewed_policy`, so the GUI lane never reports them
-  as covered; the GUI `gui_covered_components` count excludes them. Remove an entry (or
-  review the draft and rerun the generator) to put a component back.
-- **The lane fails while any remain.** These entries let the rest of the guide install so
-  its failures are visible, but a lane that left components out pending review has not
-  installed the guide: `ports.py` reports `partial` and exits 1 after the install.
-- **Reproducible generation.** `tools/modsync-ci/deselect_unreviewed.py` writes the
-  entries from the log lines `ports: unreviewed draft still selected: <guid> (<name>)`:
+- Each selected top-level component whose draft diagnostics are clean (a generated
+  `DraftReview` record for that component with no `UnparsedGaps`, `ConditionalDrafts`,
+  `RejectedDrafts` or saved `Resolution`) is accepted with one `convert --review-draft <Guid>`
+  run, the way the Rust `mark_reviewed` does. `validate` and `install` then check the
+  accepted instructions against the real archives and game. The converted component order
+  must not change (`accept_drafts_changed_component_order`).
+- A draft that cannot be accepted (a prose draft with no review record, gaps, conditional or
+  rejected drafts, a stale resolution, a fenced option draft, or a draft still fenced after
+  `--review-draft`) is a generation failure. The component is deselected as an error
+  (`source` `draft_not_acceptable`) together with every component that depends on it, before
+  any draft is accepted, so the rest installs and the lane fails afterwards.
+- The lane report gets `draft_acceptance`: `accepted` (GUIDs) and `refused`
+  (`component_guid`, `reason`); the CI log prints the two counts.
 
-  ```text
-  deselect_unreviewed.py --game k2 --guide content/k2/full.md --converted converted.toml \
-      --log install-cli.log --log install-gui.log [--write | --check]
-  ```
+TypeScript lanes do not run this stage; their review manifest covers the generated
+instructions (see [TypeScript review manifest](#typescript-review-manifest-schema-1)).
 
-  `--converted` is any `convert --parse-directions` output of the same guide (GUIDs and
-  `Dependencies` do not depend on archives). The tool maps each GUID to its
-  `<## section>::<### heading>` step, refuses GUIDs or names the guide does not have, adds
-  the transitive dependents, keeps entries without a `kind` (the `4GB Patcher`), and
-  replaces the kind-marked ones. Without `--write` it prints the result; `--check` exits 1
-  when `archive_selections.json` differs.
+### Deselection and the lane verdict
+
+A component is left out of the install only with a reason, and the guide's `Dependencies`
+form a DAG: a component whose dependency is not installed cannot be installed either. Every
+deselection therefore cascades to the component's transitive dependents (`kind`
+`dependent_of_deselected`, `caused_by` the root GUID) with the root's severity, before
+`validate`; nothing is left to the engine's own selection cascade. All of them are in
+`skipped_by_reviewed_policy` (`status`, `severity`, `section`, `heading`, `reason`, `urls`,
+`source`, `component_guid`) and passed as `--deselect <Guid>` (Rust) or left out of `--select`
+(TypeScript).
+
+| Severity | Deselected because | `source` |
+| --- | --- | --- |
+| warning | the archive is not obtainable from any source (`cache.py restore --deselect-unavailable`) | `archive_unavailable` |
+| warning | the archive is uncached by reviewed policy (`--allow-uncached-by-policy`) | `restore_report` |
+| warning | a `lane_skips` entry with `"severity": "warning"`: a step the guide itself says not to apply in this setup (`4GB Patcher`) | `lane_skips` |
+| error | any other `lane_skips` entry | `lane_skips` |
+| error | the converter generated no instructions | `no_instructions` |
+| error | the generated draft cannot be accepted | `draft_not_acceptable` |
+
+`validate` and `install` failures are quarantined the same way (see the quarantine
+sections below) and count as errors. The CI log prints one `::warning::ports: DESELECTED
+<heading> [<guid>] (<source>): <reason>` per warning and one `::error::ports: NOT INSTALLED
+...` per error. After the install, `ports.py` sets the lane status:
+
+- `installed` (exit 0): everything was installed; at most guide-sanctioned warning skips.
+- `partial` (exit 0): everything obtainable was installed to spec, but components were left
+  out because their archive is not obtainable. `partial` is `true`, `omitted_components`
+  lists them (`component_guid`, `heading`, `source`, `reason`), and the last log line is
+  `::warning title=partial install::ports: finished PARTIAL: N component(s) ...`. This is the
+  same rule as the manual lane's `partial` status: visible, never silent, and not a full
+  install of the guide.
+- `incomplete` (exit 1): everything installable was installed, but at least one component was
+  left out for an error-severity reason, quarantined, or installed from an unresolved archive
+  binding. `lane_errors` has the counts, `install_reason` keeps the install's own reason, and
+  the log ends with `::error::ports: the guide was NOT installed to spec: ...`. Errors outrank
+  `partial`; `partial` is still recorded in the report.
+- `blocked` (exit 1): the lane stopped (reason in `reason`).
 
 TypeScript (`pnpm build`, then the built CLI; the guide's parent directory selects
 `kotor1` or `kotor2`):
@@ -227,8 +233,8 @@ node packages/cli/dist/main.js install converted.toml --kotor GAME --mods ARCHIV
 [Reviewed policy skips](#reviewed-policy-skips)), lowercase and hyphenated. ModSync.ts
 has no `--deselect`: `--select` selects exactly the GUIDs given and turns every other
 mod off (`applySelectionFlags`), and it does not pull dependencies in, so a component
-that depends on a skipped one fails `validate` with `dependency-missing` (the lane stops
-earlier with `policy_skipped_component_has_dependents`). Without skips the list is
+that depends on a skipped one would fail `validate` with `dependency-missing`; `ports.py`
+deselects every dependent of a skipped component with it, so it is never selected. Without skips the list is
 every component, as `--all` was.
 
 `--ci-physical-install` is passed to both TypeScript `install` commands (`cli` mode)
@@ -263,8 +269,7 @@ because `validate` named it in a failing run.
 2. The component name must match exactly one converted component (`Name` or `Heading`;
    a case-insensitive match is accepted only when exact matching finds nothing). Its
    GUID, and the GUID of every selected component that depends on it, directly or
-   through others (`Dependencies`, the same relation the
-   `policy_skipped_component_has_dependents` check uses), are added to the shared
+   through others (`Dependencies`, the same relation the deselection cascade uses), are added to the shared
    `--deselect` list. Dependents are listed individually as `dependent_of_quarantined`.
 3. `validate` is re-run as `validate_retry_1`, `validate_retry_2`, ... (each stage has its
    own log). The final `--deselect` list, including the quarantined GUIDs, is what `install`
@@ -299,9 +304,10 @@ Restore, convert, coverage and draft-review problems happen before `validate` an
 never quarantined. `install` failures have their own stage with a game-directory restore
 (next two sections).
 
-**A green lane with quarantined components is a partial install.** The quarantined
-components were not installed and not verified, so the lane is not guide parity, and it
-is less complete than the reviewed-policy subset alone. Every one is reported:
+**Quarantined components fail the lane after the install.** The rest of the guide is
+installed so its own failures are visible, but the quarantined components were not
+installed and not verified, so the lane ends `incomplete` (exit 1; see
+[Deselection and the lane verdict](#deselection-and-the-lane-verdict)). Every one is reported:
 
 - The lane report has `quarantined_validate_failures`, one record per component: `kind`
   (`validate_failure` or `dependent_of_quarantined`), `name`, `component_guid`, `step`,
@@ -310,8 +316,9 @@ is less complete than the reviewed-policy subset alone. Every one is reported:
   nothing was quarantined. `quarantine` records the caps, the selected-component count, the
   `attempts` and, when the loop refused, `stopped` (`reason`, `component`, `step`,
   `error_line`).
-- The CI log prints `::warning::ports: N component(s) QUARANTINED after validate failures
-  ... PARTIAL install` and one `::warning::ports: quarantined <name> [<guid>]: validate
+- The CI log prints `::error::ports: N component(s) QUARANTINED after validate failures
+  ...: they are not installed and not verified; the rest of the guide was installed` and one
+  `::error::ports: quarantined <name> [<guid>]: validate
   failed at step N (<action>): <error line>` (or `depends on quarantined <guid>`) per
   component, and an `::error::` line when the loop refused.
 
@@ -321,7 +328,7 @@ omission permanent and reviewed, add it to `lane_skips` as for any other skip.
 ### Runtime quarantine of install failures (Rust CLI lane)
 
 The K1 CLI lane stops in `install` when one component's patcher needs a file that an
-unselected (pending-review) earlier component would have provided. The engine aborts with a
+unselected earlier component (deselected or quarantined) would have provided. The engine aborts with a
 line like `Install stopped. Restore before retrying; snapshot: <path>: <Component> / step 2
 (Patcher): Built-in OdyPatcher reported errors; ...`. Same standing instruction as above
 (omit what cannot install, visibly, so the remainder installs), but a failed install has
@@ -409,9 +416,9 @@ the caps), without quarantining and without restoring the game, when:
 The reason is in `quarantine.stopped` (`phase` `install`, `stage`, `reason`, `component`,
 `step`, `error_line`).
 
-**A green lane after an install quarantine is a partial install**, with the same meaning as
-for `validate`: the quarantined components were not installed and not verified, so the lane
-is not guide parity. Reporting:
+**An install quarantine fails the lane after the retried install**, as for `validate`: the
+quarantined components were not installed and not verified, so the lane ends `incomplete`.
+Reporting:
 
 - The lane report has `quarantined_install_failures`, records shaped like those of
   `quarantined_validate_failures` with `kind` `install_failure` for the failing component
@@ -419,8 +426,8 @@ is not guide parity. Reporting:
   dependents; an empty list when nothing was quarantined. `quarantine.install_attempts`
   counts the `install` runs and `quarantine.baseline` records the baseline copy
   (`status`, `files`, `bytes`).
-- The CI log prints `::warning::ports: N component(s) QUARANTINED after install failures
-  ... PARTIAL install` and one `::warning::ports: quarantined <name> [<guid>]: install
+- The CI log prints `::error::ports: N component(s) QUARANTINED after install failures
+  ...` and one `::error::ports: quarantined <name> [<guid>]: install
   failed at step N (<action>): <error line>` (or `depends on quarantined <guid>`) per
   component, next to the same block for `validate` failures. A refused quarantine is
   `::error::ports: install failure not quarantined (<reason>)`.
@@ -457,7 +464,8 @@ engaged. Now:
 The failing component and its transitive dependents are quarantined with the same rules as
 above: actions limited to `Patcher`, `Extract`, `Move`, `Copy`, `Rename`, `Delete`, at most
 15 failing components and 15% of the selected components (`install_quarantine_cap_exceeded`
-otherwise), a `::warning::` per component and a `PARTIAL install` notice, never silent.
+otherwise), an `::error::` per component, never silent; the lane ends `incomplete` once the
+rest is installed.
 
 **Recovery before every retry.** The TypeScript engine records a pending mutation in
 `<game>/.modsync/checkpoints` and refuses to start another session until it is resolved
@@ -515,7 +523,7 @@ attribution and quarantine loop as the TypeScript CLI lane (`install_gui_with_qu
   unattributable or ambiguous error, a non-quarantinable action, a missing game, a failed
   rollback or restore, the budget caps and `--max-quarantine 0` fail the lane
   (`quarantine.stopped` records why). Quarantined components are never skipped silently:
-  every one gets a `::warning::` and the `PARTIAL install` notice.
+  every one gets an `::error::` and the lane ends `incomplete` once the rest is installed.
 
 **GUI physical-install opt-in.** `gui_typescript.py` runs the ModSync.ts web server in its own
 process, which refuses a physical install unless `MODSYNC_CI_PHYSICAL_INSTALL=1` is set (the
@@ -657,12 +665,12 @@ guarantee it. It reads the report's `skipped_steps` (refusing a report that is n
 `ok` or names another guide) and, for each exact `<## section>::<### heading>`:
 
 - **Coverage.** The guide's component count and heading order checks are
-  unchanged. Only the converted component for that step is exempt from
-  `guide_steps_without_instructions` (it has none: no archive was restored for it,
-  so the converter cannot draft instructions). Every other component still needs
-  instructions. A step that is not a heading of the guide, appears twice in the
-  counted sections, or whose component another component lists in `Dependencies`
-  blocks the lane.
+  unchanged. Only the converted component for that step is exempt from the
+  no-instructions check (it has none: no archive was restored for it, so the converter
+  cannot draft instructions). Every other component without instructions is deselected as
+  an error (`no_instructions`). A step that is not a heading of the guide or appears twice
+  in the counted sections blocks the lane. A component that lists the skipped one in
+  `Dependencies`, directly or through others, is deselected with it at the same severity.
 - **Selection.** Rust: `validate` and `install` receive `--deselect <component Guid>`
   for exactly those components. The Rust CLI selects every top-level component by
   default and does not read `IsSelected` (no `--use-file-selection`), so the flag is
@@ -670,9 +678,16 @@ guarantee it. It reads the report's `skipped_steps` (refusing a report that is n
   and both `install` phases receive `--select` with every other component's GUID instead
   of `--all` (see above), and the GUI input copy marks the skipped ones unselected.
 - **Report.** The lane report gets `skipped_by_reviewed_policy`: one record per
-  step with `status: "skipped-by-reviewed-policy"`, `section`, `heading`, the
-  restore `reason`, `urls`, and `component_guid` (`null` when the converter makes
-  no component for the step).
+  step with `status: "skipped-by-reviewed-policy"`, `severity: "warning"`, `section`,
+  `heading`, the restore `reason`, `urls`, `source` (`restore_report` for
+  `skipped_steps`, `archive_unavailable` for `unavailable_steps`) and `component_guid`
+  (`null` when the converter makes no component for the step). Either kind with a
+  component makes a finished lane `partial`; see
+  [Deselection and the lane verdict](#deselection-and-the-lane-verdict).
+
+The report's `unavailable_steps` (written by `cache.py restore --deselect-unavailable` for
+archives no source could provide) take the same path; steps naming the same section and
+heading are merged into one record carrying every URL.
 
 Measured on the real guides with the Rust converter (`--parse-directions`; K1 has
 197 components, K2 151). The K2 `K2 Cutscenes Rescaled` skip is a reviewed
@@ -708,19 +723,21 @@ table, read by `ports.py` (no restore report needed):
 
 - **Schema.** Keys are `k1` or `k2` (the guide folder name); each value is a list of
   objects with `section`, `heading` and `reason`, all non-empty strings
-  without surrounding whitespace, plus optionally a `guid` (lowercase GUID) and a `kind`
-  (`unreviewed_draft` or `dependent_of_deselected`), given together; see
-  [Components deselected pending human review](#components-deselected-pending-human-review).
-  A pinned `guid` must equal the converted component's GUID (`policy_skipped_guid_mismatch`)
-  and be unique in the table. A malformed table, an unknown game key, or a
-  repeated step blocks the Rust lane (`lane_skips_invalid`, `lane_skips_duplicate`)
-  whichever game is being run; a missing file or table skips nothing. An unpinned entry may also
-  carry `"lane": "rust"` with a `bind_diagnostic`; see
-  [Bind diagnostics and Rust bind skips](#bind-diagnostics-and-rust-bind-skips).
-- **Scope.** Only the exact `<## section>::<### heading>` is skipped. A step that is
-  not in the guide, appears twice in the counted sections, or has a dependent
-  component that is not itself skipped blocks the lane, exactly like a restore-report skip. Every other step
-  still needs instructions.
+  without surrounding whitespace, plus optionally `lane` (`rust` or `typescript`; absent
+  applies to both), `severity` (`error`, the default, or `warning`) and, with `"lane":
+  "rust"` only, a `bind_diagnostic`; see
+  [Bind diagnostics and Rust bind skips](#bind-diagnostics-and-rust-bind-skips). Any other key
+  (including the former `guid`/`kind` pins), a malformed table, an unknown game key, or a
+  repeated step blocks the lane (`lane_skips_invalid`, `lane_skips_duplicate`) whichever game
+  is being run; a missing file or table skips nothing.
+- **Severity.** An error-severity skip still deselects the component (and its dependents) so
+  the rest of the guide installs, and then fails the lane (`incomplete`). `warning` is only for
+  a step the guide itself says not to apply in this setup; such a skip is to spec and does not
+  make the lane `partial`. Only the two `4GB Patcher` entries are warnings.
+- **Scope.** Only the exact `<## section>::<### heading>` is skipped, plus its dependents
+  (deselected with it). A step that is not in the guide or appears twice in the counted
+  sections blocks the lane, exactly like a restore-report skip. Every other step still needs
+  instructions.
 - **Same path as restore-report skips.** The entries are merged with the restore
   report's `skipped_steps` (a step named by both is reported once, as the restore
   report's), exempted from coverage, reclassified in `convert_skips` as
@@ -728,13 +745,10 @@ table, read by `ports.py` (no restore report needed):
   `reader_rejection`), recorded in the lane report's `skipped_by_reviewed_policy`
   (lane-skip records carry `"source": "lane_skips"` and `urls: []`), and passed to
   `validate` and `install` as `--deselect <component Guid>`.
-- **TypeScript reads only the unpinned entries.** Entries with a `guid`/`kind` pin record the
-  Rust converter's unreviewed-draft state and name Rust GUIDs, so TypeScript lanes skip
-  them (the whole table is still validated). They therefore apply the `4GB Patcher` skip
-  (the guide-order and Steam-executable reasoning holds for either converter; the reason
-  text mentions the Rust converter) plus the restore-report skips, and install the rest.
-  TypeScript's own conversion generates instructions for the other 150/119 components, so
-  they are not omitted. The Rust `gui` lane applies the table as a GUI subset (see
+- **Per lane.** Each lane applies the entries without a `lane` and those naming its
+  implementation (the whole table is still validated). The Rust lanes apply only the
+  `4GB Patcher` warnings; the TypeScript lanes also apply their `"lane": "typescript"` error
+  entries (below). The Rust `gui` lane applies the table as a GUI subset (see
   [GUI mode](#gui-mode)).
 
 `--restore-report` is accepted by both implementations. The Rust `gui` lane forwards the
@@ -892,8 +906,10 @@ component: `ComponentGuid`, `ComponentName`, `Success`, `InstructionsGenerated`,
 - `draft_review`: `bound`, `bind_failed` (only when the binding pass was not used),
   `cleared`, `skipped` and, when the lane stops on it, `unreviewed` (see
   [Archive binding](#archive-binding) and [Verified draft review](#verified-draft-review)).
-- `steps_without_instructions`, when `guide_steps_without_instructions` blocks the lane:
-  one record per guide step lacking instructions with `heading`, `component_guid`,
+- `draft_acceptance` (see [Generated draft acceptance](#generated-draft-acceptance)).
+- `steps_without_instructions`, when converted components have no instructions (each is
+  deselected as an error, `no_instructions`, with its dependents, and the lane fails after
+  the install): one record per guide step lacking instructions with `heading`, `component_guid`,
   `urls` (the component's links, with any `#fragment` removed because a MEGA fragment is
   the decryption key) and `skip_reason` (the converter's reason, `null` if it gave none).
 
@@ -965,19 +981,17 @@ type to delete, so with no answer it prints `Unknown Input, Exiting` and ModSync
 `INSTALL_QUARANTINE_ACTIONS`, so any other `Execute` failure still stops the lane with
 `action_not_quarantinable`; only this one reviewed step is omitted. The omission is visible, not
 silent: the component is listed in `skipped_by_reviewed_policy` and in the manifest with the
-assessment `omitted by reviewed policy`, the lane prints `::warning::ports: OMITTED <step>
-[<guid>] ... PARTIAL install` for every reviewed lane skip, and a green TypeScript lane is a
-partial install without the duplicate removal the guide marks as critical (the Rust lane keeps
-its own handling of the step). The K1 guide step has the same Extract, `Execute` `*.bat`, Move
+assessment `omitted by reviewed policy`, the lane prints `::error::ports: NOT INSTALLED <step>
+[<guid>] (lane_skips): <reason>`, and the TypeScript lane installs the rest and then fails
+(`incomplete`) without the duplicate removal the guide marks as critical. The K1 guide step has the same Extract, `Execute` `*.bat`, Move
 shape and the same interactive prompt; the unprompted-exit failure was observed for K2 and is
 inferred for K1.
 K1 `HR Menus` (section `Optional Widescreen & Extended Widescreen Support Mods`) is omitted from
 the TypeScript lane the same way: its converted `Execute` step runs a batch script that needs the
 widescreen-patched `swkotor.exe` copied next to the `.bat`, the guide's replace-the-game-exe step
 has no instruction the converter can turn into that copy, and CI has no non-interactive
-equivalent, so the script exits 2 with stdin closed. It is reported as a reviewed policy skip and
-a green TypeScript lane is a partial install without it; the Rust lane already deselects it as an
-unreviewed draft.
+equivalent, so the script exits 2 with stdin closed. It is an error-severity lane skip: the
+TypeScript lane installs the rest and then fails without it.
 The skip lives in `lane_skips`, the source `gen_ts_review.py` reads, so regenerate
 `ci/k1-typescript-review.json` and `ci/k2-typescript-review.json` with that tool (`--check`
 stays consistent) instead of editing them.
@@ -991,28 +1005,29 @@ stays consistent) instead of editing them.
 passes (also when a pass fails), prints each as a flushed `::warning::ports: <stage>: <component>
 [<guid>]: <reason>` line, and records them under `bind_diagnostics` in the lane report
 (`stage`, `component`, `component_guid`, `kind` of `loose_file_unresolved`, `patcher_unresolved`
-or `unresolved`, `reason`). When coverage fails with `guide_steps_without_instructions`, each
+or `unresolved`, `reason`). When converted components have no instructions, each
 step in `steps_without_instructions` carries its `bind_diagnostic` and the `::error::` listing
 prints it under the step.
 
-A component the Rust binder cannot process is omitted temporarily and visibly so the rest installs, by
-a reviewed `lane_skips` entry with `"lane": "rust"` and `"bind_diagnostic": "loose_file_unresolved"`
-(or `patcher_unresolved`), unpinned (no `guid`/`kind`, so `deselect_unreviewed.py` keeps it):
+A component the Rust binder cannot process can be named, visibly, by a reviewed `lane_skips`
+entry with `"lane": "rust"` and `"bind_diagnostic": "loose_file_unresolved"` (or
+`patcher_unresolved`):
 
 - It applies only while the bind stage recorded that diagnostic kind for the component and the
-  component still has no instructions. With no matching diagnostic the gap is a different one and
-  coverage still fails (`unapplied_bind_skips` state `unconfirmed`). Once the converter gives the
+  component still has no instructions. With no matching diagnostic the gap is a different one
+  (`unapplied_bind_skips` state `unconfirmed`) and the component is deselected as an ordinary
+  `no_instructions` error. Once the converter gives the
   component instructions the skip is not applied and the component installs (state `stale`); remove the entry.
-- When applied it is reported like any policy skip (`skipped_by_reviewed_policy`, plus
-  `bind_diagnostic` and `bind_diagnostic_reason`), deselected in `validate`/`install`, and printed as
-  `::warning::ports: OMITTED <step> [<guid>] ... PARTIAL install`. A component that depends on it still
-  blocks (`policy_skipped_component_has_dependents`) unless it is skipped as well.
-- `bind_diagnostic` is valid only with `"lane": "rust"` and without a `guid`/`kind` pin
-  (`lane_skips_invalid` otherwise); the TypeScript lanes never read it.
+- When applied it is reported like any lane skip (`skipped_by_reviewed_policy`, plus
+  `bind_diagnostic` and `bind_diagnostic_reason`, error severity unless the entry says
+  `warning`), deselected in `validate`/`install` with its dependents, and printed with the
+  converter diagnostic. Either way the lane fails once the rest is installed; the entry only
+  documents the cause.
+- `bind_diagnostic` is valid only with `"lane": "rust"` (`lane_skips_invalid` otherwise); the
+  TypeScript lanes never read it.
 
-K2 `Worn-Out Mando Armor` is skipped this way: the Rust loose-file bind refuses its layout, so it is
-omitted from the Rust lane (partial install) and tracked for an upstream converter fix. Its archive
-alias rule and the TypeScript lanes are unchanged.
+No entry uses it at present. K2 `Worn-Out Mando Armor` had one; it was removed, so the Rust lane
+installs it when the binder can place it and otherwise fails with it listed as `NOT INSTALLED`.
 
 The restored file must be a regular, non-symlink file whose map name is a plain file name in
 the archive directory. Map entries with several or conflicting files, unmapped links,
@@ -1044,13 +1059,10 @@ directory under the work directory. Reports hold reason codes, stage exit codes 
 hashes, but GUI reports include private paths; review them before publishing.
 Exit 0 means the port's own install completed and, for the CLI lanes, changed at least
 one file in the game directory (`game_files_changed`; an install that exits 0 but leaves
-the game untouched fails with `install_succeeded_but_changed_no_game_files`). An install
-that finished while the report lists `deselected_pending_review` is **not** exit 0: the
-status is `partial`, the reason `deselected_pending_review: N component(s) were never
-installed` (the install's own reason is kept as `install_reason`), and the lane fails
-until those components are reviewed and put back. Exit 0 is not, by itself, proof of
-parity with the manual reference, and for the Rust lanes it is a partial install
-whenever the report lists `skipped_by_reviewed_policy` or
-`quarantined_validate_failures` or `quarantined_install_failures` entries (see
-[Runtime quarantine](#runtime-quarantine-of-validate-failures-rust-lanes-only) and
-[install quarantine](#runtime-quarantine-of-install-failures-rust-cli-lane)).
+the game untouched fails with `install_succeeded_but_changed_no_game_files`). Exit 0 is
+status `installed` or `partial`; an install that finished with an error-severity
+deselection, a quarantined component or an unresolved archive binding is status
+`incomplete` and exit 1 (the install's own reason is kept as `install_reason`). See
+[Deselection and the lane verdict](#deselection-and-the-lane-verdict). Exit 0 is not, by
+itself, proof of parity with the manual reference: a `partial` lane left out the
+components in `omitted_components`.

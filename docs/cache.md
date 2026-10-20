@@ -286,6 +286,18 @@ The flag asserts what the lane installs; restore cannot check that, so pass it
 only after confirming the lane never installs the named section or step (see
 [ci.md](ci.md#install-lanes-and-uncached-links)).
 
+`--deselect-unavailable` (restore only; the install lanes pass it) turns a link no
+source can provide, or an uncached-by-policy link no `--allow-uncached-by-policy`
+covers, into a warning instead of a failure, provided every reference to it is inside
+a `###` step. The entry gets status `unavailable` and `unavailable_steps`, each step is
+added to a top-level `unavailable_steps` array (`guide`, `section`, `heading`, `url`,
+`reason`), and one warning per step is printed. `ports.py --restore-report` deselects
+those components and their dependents and reports the lane `partial` (see
+[ports.md](ports.md#deselection-and-the-lane-verdict)). A link under no `###` step still
+fails, and so does a download that worked but matched no reviewed selection (a reason
+naming `archive_selections.json` or a reviewed loose selection): the archive exists and
+choosing the file is a review error, not a missing download.
+
 ## Freshness and providers
 
 - A conditional GET (ETag or Last-Modified) answered with 304 for a verified
