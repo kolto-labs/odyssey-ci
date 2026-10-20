@@ -867,6 +867,58 @@ def validate_patcher_fields(operation, roots):
     require(operation["success_log"] not in expected, "installer log is not an expected game effect")
 
 
+def parse_7z_listing(text):
+    """Split `7z l -slt -ba` output into one key/value mapping per member.
+
+    7-Zip prints every property its handler supports, so an unset one appears
+    as "Key = " with an empty value (RAR5 ends each record with "NT Security = ").
+    """
+    records = []
+    for record in text.strip("\r\n").split("\n\n"):
+        metadata = {}
+        for line in record.splitlines():
+            key, separator, value = line.partition(" = ")
+            if not separator and line.endswith(" ="):
+                key, separator, value = line[:-2], " = ", ""
+            require(separator and key and key not in metadata, "ambiguous 7z listing")
+            metadata[key] = value
+        records.append(metadata)
+    return records
+
+
+def check_7z_member(metadata):
+    """Validate one listed member; return (path, is_directory, size).
+
+    Link and stream properties are judged by value, not by name: RAR5 and tar
+    listings carry "Symbolic Link", "Hard Link", "Copy Link" and "Alternate
+    Stream" on every member, empty or "-" unless the member really is one.
+    Only a Unix mode string (high attribute bits with 7-Zip's Unix extension
+    flag) is read as a file type; high bits without that flag are printed as
+    plain hex and say nothing about the member. Windows attribute letters are
+    harmless here, and anything that still materialises as a link or special
+    file is rejected again after extraction.
+    """
+    name = metadata.get("Path", "").replace("\\", "/")
+    require(name and ":" not in name
+            and not any(ord(character) < 32 for character in name)
+            and not Path(name).is_absolute()
+            and all(part not in ("", ".", "..") for part in name.split("/")),
+            "unsafe 7z archive path")
+    require(not any(("link" in key.lower() or "stream" in key.lower()) and value not in ("", "-")
+                    for key, value in metadata.items()), "7z link or stream member")
+    attributes = metadata.get("Attributes", "")
+    for field in (attributes, metadata.get("Mode", "")):
+        unix_mode = re.search(r"(?:^| )([bcdlps-][rwxstST-]{9})(?: |$)", field)
+        require(unix_mode is None or unix_mode[1][0] in ("-", "d"), "special 7z member")
+    require(metadata.get("Encrypted", "-") == "-", "encrypted 7z member")
+    directory = metadata.get("Folder") == "+" or attributes.startswith("D")
+    size = metadata.get("Size", "")
+    require(size.isdecimal(), "missing 7z member size")
+    size = int(size)
+    require(not directory or size == 0, "invalid directory size")
+    return name, directory, size
+
+
 def extract_7z(source, destination, deadline, rollback_reserve=None):
     executable = shutil.which("7z")
     require(executable is not None, "7z executable missing")
@@ -918,34 +970,13 @@ def extract_7z(source, destination, deadline, rollback_reserve=None):
             run(["l", "-slt", "-ba", "-sccUTF-8", "-p", "--", str(source.resolve())],
                 staging, listing, 8 * 1024 * 1024)
             listing.seek(0)
-            records = listing.read().decode("utf-8", errors="strict").strip().split("\n\n")
+            records = parse_7z_listing(listing.read().decode("utf-8", errors="strict"))
         expected = {}
         total = 0
-        for record in records:
+        for metadata in records:
             check_deadline(deadline)
-            metadata = {}
-            for line in record.splitlines():
-                key, separator, value = line.partition(" = ")
-                require(separator and key not in metadata, "ambiguous 7z listing")
-                metadata[key] = value
-            name = metadata.get("Path", "").replace("\\", "/")
-            require(name and ":" not in name
-                    and not any(ord(character) < 32 for character in name)
-                    and not Path(name).is_absolute()
-                    and all(part not in ("", ".", "..") for part in name.split("/")),
-                    "unsafe 7z archive path")
+            name, directory, size = check_7z_member(metadata)
             require(name not in expected, "duplicate 7z member")
-            require(not any("link" in key.lower() or "stream" in key.lower()
-                            for key in metadata), "7z link or stream member")
-            attributes = metadata.get("Attributes", "")
-            unix_mode = re.search(r"(?:^| )([bcdlps-][rwxstST-]{9})(?: |$)", attributes)
-            require(unix_mode is None or unix_mode[1][0] in ("-", "d"), "special 7z member")
-            require(metadata.get("Encrypted", "-") == "-", "encrypted 7z member")
-            directory = metadata.get("Folder") == "+" or attributes.startswith("D")
-            size = metadata.get("Size", "")
-            require(size.isdecimal(), "missing 7z member size")
-            size = int(size)
-            require(not directory or size == 0, "invalid directory size")
             total += size
             require(total <= byte_limit, "7z expanded byte limit exceeded")
             expected[name] = (directory, size)
