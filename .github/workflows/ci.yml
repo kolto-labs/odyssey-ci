@@ -1161,20 +1161,14 @@ jobs:
           path: ${{ runner.temp }}/drafts
           retention-days: 14
           if-no-files-found: error
-      # Drafted and uploaded first so a human can review it; the lane still fails because it installed nothing.
-      - name: Fail without a reviewed plan
-        if: steps.plan.outputs.present == 'false'
-        run: echo "::error title=manual lane installed nothing::$PLAN is missing. The manual lane needs a human-reviewed, Wine-executed plan; a draft is attached as manual-drafts-$GAME."; exit 1
       - name: Install Wine and tools, free disk space
-        if: steps.plan.outputs.present == 'true'
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           sudo dpkg --add-architecture i386
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends wine wine64 wine32:i386 xvfb xauth p7zip-full >/dev/null
+          sudo apt-get install -y -qq --no-install-recommends wine wine64 wine32:i386 xvfb xauth xdotool imagemagick p7zip-full >/dev/null
           python3 tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone"
       - name: Restore game cache
-        if: steps.plan.outputs.present == 'true'
         id: game_cache
         uses: actions/cache/restore@v4
         with:
@@ -1184,53 +1178,47 @@ jobs:
           fail-on-cache-miss: ${{ env.CACHE_WRITER == 'true' }}
       - name: Look up game backup artifact
         id: game_backup
-        if: steps.plan.outputs.present == 'true' && steps.game_cache.outputs.cache-matched-key == ''
+        if: steps.game_cache.outputs.cache-matched-key == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: python tools/modsync-ci/game_backup.py status --game "$GAME"
       - name: Restore game from backup artifact
         id: game_artifact
-        if: steps.plan.outputs.present == 'true' && steps.game_cache.outputs.cache-matched-key == '' && steps.game_backup.outputs.artifact_id != ''
+        if: steps.game_cache.outputs.cache-matched-key == '' && steps.game_backup.outputs.artifact_id != ''
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
           ARTIFACT_ID: ${{ steps.game_backup.outputs.artifact_id }}
         run: python tools/modsync-ci/game_backup.py fetch --game "$GAME" --artifact-id "$ARTIFACT_ID" --seal-dir "$RUNNER_TEMP/sealed"
       - name: Require the game
-        if: steps.plan.outputs.present == 'true' && steps.game_cache.outputs.cache-matched-key == '' && steps.game_artifact.outputs.restored != 'true'
+        if: steps.game_cache.outputs.cache-matched-key == '' && steps.game_artifact.outputs.restored != 'true'
         run: echo "::error::$GAME has no game cache on this ref and no usable game-$GAME-sealed backup artifact; run the game job from dev or a manual dispatch to save it (docs/ci.md, Actions cache size and eviction)"; exit 1
       - name: Explain a game cache miss
         if: failure() && steps.game_cache.outcome == 'failure'
         run: echo "::error::game cache evicted — re-run the game job (then this lane); see docs/ci.md, Actions cache size and eviction"
       - name: Unpack game
-        if: steps.plan.outputs.present == 'true'
         env:
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
         run: |
           python tools/modsync-ci/game_cache.py unpack --game "$GAME" \
             --game-dir "$RUNNER_TEMP/game" --seal "$RUNNER_TEMP/sealed/baseline.seal"
       - name: Normalize game case
-        if: steps.plan.outputs.present == 'true'
         run: |
           python tools/modsync-ci/game_cache.py normalize-case --game "$GAME" --game-dir "$RUNNER_TEMP/game" --label manual
       - name: Game inventory
-        if: steps.plan.outputs.present == 'true'
         run: |
           python tools/modsync-ci/game_cache.py inventory --game "$GAME" --game-dir "$RUNNER_TEMP/game" --label manual
       - name: Install archive tools
-        if: steps.plan.outputs.present == 'true'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq 7zip 7zip-rar megatools libarchive-tools >/dev/null && { sudo apt-get install -y -qq unrar >/dev/null 2>&1 || echo "unrar unavailable; falling back to 7z/bsdtar"; }
           python -m pip install --quiet gdown
       - name: Restore mod archive cache
-        if: steps.plan.outputs.present == 'true'
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/mod-cache
           key: ${{ needs.mods.outputs.archive_cache_key || 'mod-archives-' }}
           restore-keys: mod-archives-
       - name: Restore required mod archives
-        if: steps.plan.outputs.present == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
@@ -1247,9 +1235,40 @@ jobs:
           if [[ -n "$RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID" && -n "$MOD_CACHE_BUCKET" ]]; then
             remote=(--remote "MODCACHE:$MOD_CACHE_BUCKET/modsync-archives")
           fi
+          mkdir -p "$RUNNER_TEMP/evidence"
+          # The same reviewed uncached-by-policy links as the install lanes; all are outside the Mod List.
+          policy=(--allow-uncached-by-policy "Optional Install Assistant - Quicker TSLPatching::Quicker TSLPatching")
+          if [[ "$GAME" == k1 ]]; then
+            policy+=(--allow-uncached-by-policy "Optional Widescreen & Extended Widescreen Support Mods::Remastered Cutscenes")
+          elif [[ "$GAME" == k2 ]]; then
+            policy+=(--allow-uncached-by-policy "Enhanced Widescreen Support Mods::K2 Cutscenes Rescaled")
+          fi
           python tools/modsync-ci/cache.py restore --guide "content/$GAME/full.md" \
             --cache-dir "$RUNNER_TEMP/mod-cache" --destination "$RUNNER_TEMP/archives" \
-            "${remote[@]}"
+            --archive-map "$RUNNER_TEMP/evidence/archive-map.json" "${policy[@]}" "${remote[@]}"
+      # Evidence for authoring and checking the plan: archive and member hashes, shipped patchers and
+      # their configuration. Mod metadata only; no game files.
+      - name: Inventory the restored archives
+        run: |
+          python tools/modsync-ci/manual_inventory.py --archives "$RUNNER_TEMP/archives" \
+            --archive-map "$RUNNER_TEMP/evidence/archive-map.json" --out "$RUNNER_TEMP/evidence/inventory.json"
+      - name: Probe the original patchers under Wine
+        if: steps.plan.outputs.present == 'false'
+        run: |
+          xvfb-run -a -s "-screen 0 1280x1024x24" python tools/modsync-ci/manual_probe.py \
+            --inventory "$RUNNER_TEMP/evidence/inventory.json" --archives "$RUNNER_TEMP/archives" \
+            --out "$RUNNER_TEMP/evidence/probe"
+      - name: Upload manual plan evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-evidence-${{ matrix.game }}
+          path: ${{ runner.temp }}/evidence
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Fail without a reviewed plan
+        if: steps.plan.outputs.present == 'false'
+        run: echo "::error title=manual lane installed nothing::$PLAN is missing. The manual lane needs a reviewed, Wine-executed plan; a draft is attached as manual-drafts-$GAME and the archive evidence as manual-evidence-$GAME."; exit 1
       - name: Install the full guide manually with the original patchers
         if: steps.plan.outputs.present == 'true'
         run: |
