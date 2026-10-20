@@ -1,0 +1,137 @@
+name: Manual lane patcher probe
+
+# Fast evidence loop for the manual lane's gui_patcher/patcher operations: restores one
+# game and the mod archives exactly like the manual job in ci.yml, then runs
+# manual_probe2.py, which installs a few mods with their original patchers under
+# Wine/Xvfb into scratch copies of the game and records every screen, window, log and
+# changed file. Read-only: it restores caches but never saves one, and uploads only
+# the probe output (mod metadata, screenshots and logs; no game files).
+on:
+  workflow_dispatch:
+    inputs:
+      game:
+        description: Game to probe
+        type: choice
+        options: [k1, k2]
+        default: k1
+      only:
+        description: Comma-separated probe sections (empty = all; see manual_probe2.py --help)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: manual-probe-${{ inputs.game }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: probe (${{ inputs.game }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      GAME: ${{ inputs.game }}
+      WINEPREFIX: /home/runner/.wine-modsync
+      WINEDEBUG: '-all'
+      WINEDLLOVERRIDES: 'mscoree,mshtml='
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Wine and tools, free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends wine wine64 wine32:i386 xvfb xauth xdotool imagemagick p7zip-full >/dev/null
+          python3 tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone"
+      - name: Restore game cache
+        id: game_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/sealed/*.seal
+          key: game-${{ inputs.game }}-v1
+          restore-keys: steam-sealed-v3-excludingmovies-${{ inputs.game }}-Linux-
+      - name: Look up game backup artifact
+        id: game_backup
+        if: steps.game_cache.outputs.cache-matched-key == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/modsync-ci/game_backup.py status --game "$GAME"
+      - name: Restore game from backup artifact
+        id: game_artifact
+        if: steps.game_cache.outputs.cache-matched-key == '' && steps.game_backup.outputs.artifact_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
+          ARTIFACT_ID: ${{ steps.game_backup.outputs.artifact_id }}
+        run: python tools/modsync-ci/game_backup.py fetch --game "$GAME" --artifact-id "$ARTIFACT_ID" --seal-dir "$RUNNER_TEMP/sealed"
+      - name: Require the game
+        if: steps.game_cache.outputs.cache-matched-key == '' && steps.game_artifact.outputs.restored != 'true'
+        run: echo "::error::$GAME has no game cache on this ref and no usable game-$GAME-sealed backup artifact"; exit 1
+      - name: Unpack game
+        env:
+          CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
+        run: |
+          python tools/modsync-ci/game_cache.py unpack --game "$GAME" \
+            --game-dir "$RUNNER_TEMP/game" --seal "$RUNNER_TEMP/sealed/baseline.seal"
+          rm -rf "$RUNNER_TEMP/sealed"
+      - name: Normalize game case
+        run: |
+          python tools/modsync-ci/game_cache.py normalize-case --game "$GAME" --game-dir "$RUNNER_TEMP/game" --label probe
+      - name: Install archive tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq 7zip 7zip-rar megatools libarchive-tools innoextract unar poppler-utils >/dev/null && { sudo apt-get install -y -qq unrar >/dev/null 2>&1 || echo "unrar unavailable"; }
+          python -m pip install --quiet gdown
+      - name: Restore mod archive cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/mod-cache
+          key: mod-archives-
+          restore-keys: mod-archives-
+      - name: Restore required mod archives
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
+          RCLONE_CONFIG_MODCACHE_TYPE: s3
+          RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_MODCACHE_REGION: auto
+          RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+          RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_READ_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_READ_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: |
+          remote=()
+          if [[ -n "$RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID" && -n "$MOD_CACHE_BUCKET" ]]; then
+            remote=(--remote "MODCACHE:$MOD_CACHE_BUCKET/modsync-archives")
+          fi
+          policy=(--allow-uncached-by-policy "Optional Install Assistant - Quicker TSLPatching::Quicker TSLPatching")
+          if [[ "$GAME" == k1 ]]; then
+            policy+=(--allow-uncached-by-policy "Optional Widescreen & Extended Widescreen Support Mods::Remastered Cutscenes")
+          elif [[ "$GAME" == k2 ]]; then
+            policy+=(--allow-uncached-by-policy "Enhanced Widescreen Support Mods::K2 Cutscenes Rescaled")
+          fi
+          python tools/modsync-ci/cache.py restore --guide "content/$GAME/full.md" \
+            --cache-dir "$RUNNER_TEMP/mod-cache" --destination "$RUNNER_TEMP/archives" \
+            "${policy[@]}" "${remote[@]}"
+          rm -rf "$RUNNER_TEMP/mod-cache"
+      - name: Probe the original patchers
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          df -h "$RUNNER_TEMP"
+          xvfb-run -a -s "-screen 0 1280x1024x24" python tools/modsync-ci/manual_probe2.py \
+            --game "$GAME" --game-dir "$RUNNER_TEMP/game" --archives "$RUNNER_TEMP/archives" \
+            --scratch "$RUNNER_TEMP/probe-scratch" --out "$RUNNER_TEMP/probe-out" --only "$ONLY"
+      - name: Upload probe output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-probe-${{ inputs.game }}
+          path: ${{ runner.temp }}/probe-out
+          retention-days: 14
+          if-no-files-found: ignore
