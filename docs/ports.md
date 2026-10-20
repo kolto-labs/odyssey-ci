@@ -14,13 +14,16 @@ Each lane:
    `MODSYNC_TS_REF`, default `feat/physical-install`), the unmerged ModSync.ts branch
    that adds opt-in physical install.
 2. Restores `game-<game>-v1` (a miss fails the lane) and runs `game_cache.py
-   unpack`, which verifies every file. See [steam.md](steam.md).
+   unpack`, which verifies every file, then deletes the sealed game. See [steam.md](steam.md).
 3. Restores archives with `cache.py restore --archive-map --deselect-unavailable`. An archive
    no source can provide is a warning, not a failure: every guide step that links it is listed
    in the report's `unavailable_steps`, and `ports.py` leaves those components and their
    dependents out (see [Deselection and the lane verdict](#deselection-and-the-lane-verdict)).
    A link outside any `###` step, and a download that worked but matched no reviewed selection
-   in `archive_selections.json`, still fail the restore. See [cache.md](cache.md).
+   in `archive_selections.json`, still fail the restore. The restored archive cache
+   (`$RUNNER_TEMP/mod-cache`) is deleted afterwards: the install job never saves it, and the
+   k1 Cutscenes Rescaled extraction ran out of disk with it in place (run 39445750831). The
+   install step prints `df -h` before `ports.py`. See [cache.md](cache.md).
 4. TypeScript lanes install Wine (`wine wine64 wine32:i386`, no recommends): `Execute`
    and the legacy TSLPatcher run through `wine` outside Windows.
 5. Runs `ports.py`, passing `--review-manifest ci/<game>-<impl>-review.json` when
@@ -214,8 +217,10 @@ sections below) and count as errors. The CI log prints one `::warning::ports: DE
   install of the guide.
 - `incomplete` (exit 1): everything installable was installed, but at least one component was
   left out for an error-severity reason, quarantined, or installed from an unresolved archive
-  binding. `lane_errors` has the counts, `install_reason` keeps the install's own reason, and
-  the log ends with `::error::ports: the guide was NOT installed to spec: ...`. Errors outrank
+  binding (`bind_unresolved`; a component the lane did not install at all, whether deselected
+  with any severity, quarantined or a widescreen component the Rust GUI lane leaves out, is
+  never counted there). `lane_errors` has the counts, `install_reason` keeps the install's own
+  reason, and the log ends with `::error::ports: the guide was NOT installed to spec: ...`. Errors outrank
   `partial`; `partial` is still recorded in the report.
 - `blocked` (exit 1): the lane stopped (reason in `reason`).
 
@@ -1061,7 +1066,7 @@ Exit 0 means the port's own install completed and, for the CLI lanes, changed at
 one file in the game directory (`game_files_changed`; an install that exits 0 but leaves
 the game untouched fails with `install_succeeded_but_changed_no_game_files`). Exit 0 is
 status `installed` or `partial`; an install that finished with an error-severity
-deselection, a quarantined component or an unresolved archive binding is status
+deselection, a quarantined component or an installed component with an unresolved archive binding is status
 `incomplete` and exit 1 (the install's own reason is kept as `install_reason`). See
 [Deselection and the lane verdict](#deselection-and-the-lane-verdict). Exit 0 is not, by
 itself, proof of parity with the manual reference: a `partial` lane left out the

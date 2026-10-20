@@ -2402,6 +2402,26 @@ class LaneVerdictMainTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertEqual(report["status"], "incomplete")
 
+    def test_an_unresolved_binding_of_a_component_that_was_not_installed_is_not_counted(self):
+        # Run 39445750831, k2 Rust GUI: Upscaled Maps and Loading Screen Rescaled are widescreen
+        # components the GUI lane leaves out, so they were not installed from any binding.
+        diagnostic = {"component_guid": PENDING_ONE, "kind": "x", "reason": "unresolved"}
+        cases = {
+            "gui_widescreen": {"gui_not_covered": {"widescreen_phase": "not_covered_by_gui_lane",
+                                                   "excluded_widescreen": [{"component_guid": PENDING_ONE,
+                                                                            "heading": "Mod One"}]}},
+            "warning_deselection": {"skipped_by_reviewed_policy": [
+                self.record(PENDING_ONE, "warning", "archive_unavailable")]},
+        }
+        for name, fields in cases.items():
+            with self.subTest(case=name):
+                errors = ports.lane_errors({"bind_diagnostics": [diagnostic], **fields})
+                self.assertEqual((errors["count"], errors["bind_unresolved"], errors["bind_unresolved_guids"]),
+                                 (0, 0, []))
+        errors = ports.lane_errors({"bind_diagnostics": [diagnostic], "gui_not_covered": {
+            "excluded_widescreen": [{"component_guid": PENDING_TWO, "heading": "Mod Two"}]}})
+        self.assertEqual(errors["bind_unresolved_guids"], [PENDING_ONE])
+
 
 class UnavailableArchiveReportTests(unittest.TestCase):
     URL = "https://example.invalid/files/2-two/"

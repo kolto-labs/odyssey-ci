@@ -2596,16 +2596,22 @@ def lane_errors(report):
 
     Every component that was not installed for a reason other than an unobtainable archive or a
     guide-sanctioned skip (error-severity deselections and their dependents, and validate or install
-    quarantines), plus every component the archive binding left unresolved: such a component may
-    still install from its prose draft, but not from a layout the converter resolved.
+    quarantines), plus every component the archive binding left unresolved that the lane still
+    installed: such a component may install from its prose draft, but not from a layout the
+    converter resolved. A component that was not installed at all (deselected with any severity,
+    quarantined, or a widescreen component the Rust GUI lane leaves out) is never counted as an
+    unresolved binding.
     """
-    deselected = [record for record in report.get(SKIPPED_REPORT_KEY) or ()
-                  if record.get("component_guid") and record.get("severity", SEVERITY_ERROR) == SEVERITY_ERROR]
+    skipped = [record for record in report.get(SKIPPED_REPORT_KEY) or () if record.get("component_guid")]
+    deselected = [record for record in skipped if record.get("severity", SEVERITY_ERROR) == SEVERITY_ERROR]
     quarantined = quarantined_entries(report)
     excluded = {record["component_guid"] for record in deselected} | {
         item["component_guid"] for item in quarantined}
+    gui_excluded = (report.get("gui_not_covered") or {}).get("excluded_widescreen") or ()
+    not_installed = excluded | {record["component_guid"] for record in skipped} | {
+        item["component_guid"] for item in gui_excluded if item.get("component_guid")}
     unresolved = sorted({item["component_guid"] for item in report.get(BIND_DIAGNOSTICS_KEY) or ()
-                         if item.get("component_guid") and item["component_guid"] not in excluded})
+                         if item.get("component_guid") and item["component_guid"] not in not_installed})
     return {"count": len(excluded) + len(unresolved), "not_installed": len(excluded),
             "deselected": len(deselected), "quarantined": len(quarantined),
             "bind_unresolved": len(unresolved), "bind_unresolved_guids": unresolved}
