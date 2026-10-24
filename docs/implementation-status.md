@@ -1,5 +1,22 @@
 # Implementation status
 
+## Live verification on 2026-10-24
+
+The latest full CI run, `39755768203` at `0f5faf8`, failed before any install:
+both game jobs had no game cache or backup, received empty seed URL/key values,
+and failed Steam Guard login. The seed secret names exist in repository Settings,
+but that does not establish nonempty values. No full-guide success is claimed.
+Tools unit tests, P2P loopback and artstore refresh passed remotely. The mods job
+reported 38 unresolved checks (35 Nexus, two GameFront, one DeadlyStream timeout).
+Both reviewed manual plans are now committed. The historical snapshot below has
+not been revalidated as a description of current implementation or cache contents.
+
+Use the `game_seed_probe` dispatch described in [ci.md](ci.md#game-acquisition-diagnostics)
+to diagnose acquisition without Steam sign-ins or the full install matrix.
+Single-use Steam codes now require the manual `use_steam_guard_codes` input.
+
+## Historical snapshot
+
 As of 2026-10-16. Statements about code and the workflow were checked against this
 branch (`fix/ci-archive-restore-and-manual-plans`). Actions cache entries were
 read with `gh cache list` on the same day.

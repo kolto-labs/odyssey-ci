@@ -15,6 +15,14 @@ on:
     - cron: '23 4 * * 1,4'
   workflow_dispatch:
     inputs:
+      game_seed_probe:
+        description: Restore and cache both game seeds only (no Steam login or install lanes)
+        type: boolean
+        default: false
+      use_steam_guard_codes:
+        description: Allow single-use Steam Guard codes on this manual run
+        type: boolean
+        default: false
       seed_archives:
         description: Seed the archive cache from the staging remote (main only; skips every other job)
         type: boolean
@@ -54,13 +62,22 @@ jobs:
   # their unit tests, so run them on every event. Needs no secrets.
   tools:
     name: tools unit tests
-    if: ${{ !inputs.seed_archives }}
+    if: ${{ !inputs.seed_archives || inputs.game_seed_probe }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Validate dispatch mode
+        env:
+          SEED_ARCHIVES: ${{ inputs.seed_archives }}
+          GAME_SEED_PROBE: ${{ inputs.game_seed_probe }}
+        run: |
+          if [[ "$SEED_ARCHIVES" == true && "$GAME_SEED_PROBE" == true ]]; then
+            echo "::error::seed_archives and game_seed_probe are mutually exclusive."
+            exit 1
+          fi
       - name: Run the tools/modsync-ci unit tests
         run: |
           # manual.py resolves game paths with PyKotor; its tests need the same pinned version.
@@ -139,15 +156,21 @@ jobs:
           GAME_SEED_SHA256_K2: ${{ secrets.GAME_SEED_SHA256_K2 }}
         run: python tools/modsync-ci/game_seed.py restore --game "$GAME" --game-dir "$RUNNER_TEMP/game"
 
+      - name: Require a restored seed for the probe
+        if: inputs.game_seed_probe && steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true' && steps.seed.outputs.restored != 'true'
+        run: |
+          echo "::error::$GAME seed was unavailable or could not be restored. Check the seed step above; repository secret names alone do not prove nonempty values. No Steam login was attempted."
+          exit 1
+
       - name: Download game with SteamCMD
-        if: steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true' && steps.seed.outputs.restored != 'true'
+        if: ${{ !inputs.game_seed_probe && steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true' && steps.seed.outputs.restored != 'true' }}
         timeout-minutes: 45
         env:
           STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
           STEAM_PASSWORD: ${{ secrets.STEAM_PASSWORD }}
           STEAM_CONFIG_VDF: ${{ secrets.STEAM_CONFIG_VDF }}
-          STEAM_RECOVERY_CODE: ${{ secrets.STEAM_RECOVERY_CODE }}  # optional: Steam Guard recovery code(s), tried before STEAM_GUARD_CODES
-          STEAM_GUARD_CODES: ${{ secrets.STEAM_GUARD_CODES }}  # optional: whitespace-separated Steam Guard backup codes
+          STEAM_RECOVERY_CODE: ${{ github.event_name == 'workflow_dispatch' && inputs.use_steam_guard_codes && secrets.STEAM_RECOVERY_CODE || '' }}  # opt-in: Steam Guard recovery code(s), tried before STEAM_GUARD_CODES
+          STEAM_GUARD_CODES: ${{ github.event_name == 'workflow_dispatch' && inputs.use_steam_guard_codes && secrets.STEAM_GUARD_CODES || '' }}  # opt-in: whitespace-separated Steam Guard backup codes
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
         run: |
           set -euo pipefail
@@ -260,7 +283,7 @@ jobs:
           exit 1
 
   mods:
-    if: ${{ !inputs.seed_archives && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
+    if: ${{ !inputs.seed_archives && !inputs.game_seed_probe && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
     continue-on-error: true  # a stale archive cache must never block the install lanes
     concurrency:
       group: mod-cache-writer
@@ -599,7 +622,7 @@ jobs:
   artstore-refresh:
     name: artstore refresh
     needs: [mods]
-    if: ${{ !cancelled() && !inputs.seed_archives && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && !inputs.seed_archives && !inputs.game_seed_probe && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     concurrency:
       group: mod-cache-writer
       cancel-in-progress: false
@@ -741,7 +764,7 @@ jobs:
   # this with the scheduled refresh so the two never write the manifest at once.
   seed:
     name: seed archive cache
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.seed_archives }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.seed_archives && !inputs.game_seed_probe }}
     environment: mod-cache-seed
     concurrency:
       group: mod-cache-writer
@@ -792,7 +815,7 @@ jobs:
         run: python tools/modsync-ci/seed_archives.py --verify
 
   p2p-loopback:
-    if: ${{ !inputs.seed_archives && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
+    if: ${{ !inputs.seed_archives && !inputs.game_seed_probe && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -848,7 +871,7 @@ jobs:
     name: install (${{ matrix.game }}, ${{ matrix.implementation }}, ${{ matrix.mode }})
     needs: [game, mods]
     # Run per game even if the other game failed; unpacking fails if this game is missing.
-    if: ${{ !cancelled() && needs.game.result != 'skipped' }}
+    if: ${{ !cancelled() && !inputs.game_seed_probe && needs.game.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     # A job-level block replaces the top-level one, so contents: read is repeated. actions: read lets the
@@ -1137,7 +1160,7 @@ jobs:
     name: manual (${{ matrix.game }})
     needs: [game, mods]
     # Run per game even if the other game failed; unpacking fails if this game is missing.
-    if: ${{ !cancelled() && needs.game.result != 'skipped' }}
+    if: ${{ !cancelled() && !inputs.game_seed_probe && needs.game.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     # A job-level block replaces the top-level one, so contents: read is repeated. actions: read lets the
