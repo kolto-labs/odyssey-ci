@@ -27,6 +27,25 @@ plan; see [Private CI setup](private-ci-setup.md).
 Only `main` pushes, the schedule and manual dispatch save to the Actions cache; pull
 requests and releases only restore (see [Actions cache size and eviction](#actions-cache-size-and-eviction)).
 
+## Game acquisition diagnostics
+
+Dispatch `CI` with `game_seed_probe=true` to run tools tests and the two game jobs
+without mod downloads, install lanes, P2P builds, or Steam sign-ins. Existing game
+caches and encrypted backup artifacts are reused; otherwise each seed is downloaded,
+verified, restored, inventoried and sealed through the normal acquisition path.
+A missing or invalid seed fails the probe explicitly. This proves game acquisition
+only, not a full-guide installation. Do not combine it with `seed_archives`.
+
+```sh
+gh workflow run ci.yml -R kolto-labs/odyssey-ci -f game_seed_probe=true
+```
+
+Steam Guard recovery/backup codes are single-use. Routine runs and pull requests
+never consume them. A manual run can explicitly opt in with
+`use_steam_guard_codes=true`; saved-login and password attempts still run normally
+outside the seed probe. Secret names listed in Settings can have empty values;
+inspect the seed step's missing-name diagnostics before retrying Steam.
+
 ## Jobs
 
 ```

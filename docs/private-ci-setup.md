@@ -65,8 +65,8 @@ Names referenced as `secrets.*` under `.github/`. Optional ones may be left unse
 | `STEAM_USERNAME` | ci | Steam account that owns both games |
 | `STEAM_PASSWORD` | ci | Password of that account |
 | `STEAM_CONFIG_VDF` | ci (optional) | Base64 SteamCMD `config.vdf`, a saved login that needs no Steam Guard approval |
-| `STEAM_RECOVERY_CODE` | ci (optional) | Steam Guard recovery code(s), tried before `STEAM_GUARD_CODES` |
-| `STEAM_GUARD_CODES` | ci (optional) | Whitespace-separated single-use Steam Guard backup codes |
+| `STEAM_RECOVERY_CODE` | ci (optional) | Steam Guard recovery code(s), enabled only by manual `use_steam_guard_codes=true`, tried before `STEAM_GUARD_CODES` |
+| `STEAM_GUARD_CODES` | ci (optional) | Whitespace-separated single-use Steam Guard backup codes, enabled only by manual `use_steam_guard_codes=true` |
 | `GAME_SEED_URL_K1`, `GAME_SEED_URL_K2` | ci (optional) | URL of the encrypted game seed tried before SteamCMD |
 | `GAME_SEED_KEY_K1`, `GAME_SEED_KEY_K2` | ci (optional) | Key that decrypts that seed |
 | `GAME_SEED_SHA256_K1`, `GAME_SEED_SHA256_K2` | ci (optional) | Expected SHA-256 of the seed |

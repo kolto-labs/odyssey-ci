@@ -30,7 +30,8 @@ Steam account. Fork and Dependabot pull requests get no secrets and skip it.
       `STEAM_USERNAME` and `STEAM_PASSWORD`. Steam sends an approval request to
       the Steam mobile app; if it is not approved in time, that attempt fails (K2
       approvals have timed out this way).
-   3. If that also failed, try each code in `STEAM_RECOVERY_CODE`, then each code
+   3. On a manual run with `use_steam_guard_codes=true`, if that also failed,
+      try each code in `STEAM_RECOVERY_CODE`, then each code
       in `STEAM_GUARD_CODES`, in turn (see [Backup-code fallback](#backup-code-fallback)).
       The step stops trying as soon as Steam answers `Rate Limit Exceeded`.
 5. `game_cache.py inventory --require-modules` (the `Seal game` step) prints the restored tree (see
@@ -62,6 +63,11 @@ by the `game` job's lookup, so a hit on a legacy entry ends the job without
 contacting Steam and without running the `.rim` check. If an install lane's
 inventory shows a legacy entry with no `.rim` files, delete that cache entry and
 re-run `game`.
+
+For an acquisition-only diagnostic, dispatch `CI` with `game_seed_probe=true`.
+It reuses caches/backups or restores seeds, performs the normal inventory/sealing,
+and skips Steam and all install lanes. Missing seed configuration fails explicitly.
+See [Game acquisition diagnostics](ci.md#game-acquisition-diagnostics).
 
 ## Game seed
 
