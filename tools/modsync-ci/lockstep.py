@@ -388,8 +388,11 @@ class Session:
                                      "discrepancies": list(discrepancies)}
         for item in list(discrepancies)[:20]:
             side = item.get(self.left.name) or item.get(self.right.name)
-            print("::error title=lockstep discrepancy::%s: %s differs (%s) between %s and %s"
-                  % (label, side["path"], item["kind"], self.left.name, self.right.name), flush=True)
+            # Which side has which spellings, so the log alone names the patcher that missed a file.
+            spellings = "".join("; %s has %s" % (name, " and ".join(paths))
+                                for name, paths in (item.get("spellings") or {}).items() if paths)
+            print("::error title=lockstep discrepancy::%s: %s differs (%s) between %s and %s%s"
+                  % (label, side["path"], item["kind"], self.left.name, self.right.name, spellings), flush=True)
         if not discrepancies:
             print("::error title=lockstep stopped::%s: %s" % (label, reason), flush=True)
 

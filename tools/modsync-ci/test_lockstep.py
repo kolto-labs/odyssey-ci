@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -155,8 +157,11 @@ class Run(Fixture):
 
     def test_new_case_collision_fails_even_on_both_sides(self):
         # Windows would have overwritten override/base.2da; two files on Linux mean the patcher missed it.
-        code, report = self.run_steps([self.write_step("dup", "Override/BASE.2da", "base")])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code, report = self.run_steps([self.write_step("dup", "Override/BASE.2da", "base")])
         self.assertEqual(code, 1)
+        self.assertIn("ody has Override/BASE.2da and override/base.2da", output.getvalue())
         folder, item = report["stopped_at"]["discrepancies"]
         self.assertEqual((folder["kind"], item["kind"]), ("case_collision", "case_collision"))
         self.assertEqual(folder["spellings"]["ody"], ["Override", "override"])
