@@ -49,8 +49,8 @@ inspect the seed step's missing-name diagnostics before retrying Steam.
 ## Jobs
 
 ```
-game (k1, k2) ──┬──> install (k1|k2 × rust|typescript × cli|gui)   8 jobs
-mods ───────────┴──> manual (k1|k2)                                2 jobs
+game (k1, k2) ──┬──> install (k1|k2 × rust|typescript × cli|gui)   8 jobs, 2 installs each
+mods ───────────┴──> manual (k1|k2)                                2 jobs, 2 installs each
 p2p-loopback                                                       1 job, standalone
 tools                                                              1 job, standalone
 mods ───> artstore refresh                                         schedule / dispatch only
@@ -132,8 +132,53 @@ mod installers see a case-normalized, Windows-equivalent tree; see
 the Actions cache that `mods` saved in the same run (key from
 `needs.mods.outputs.archive_cache_key`, falling back to the `mod-archives-` prefix when
 `mods` failed or was skipped; a miss is not an error), restores the archives for `content/<game>/full.md` from the chain
-below, and runs `ports.py` to install the full guide. `gui` lanes run under Xvfb and install `python3-tk` so the runner's `python` can import `tkinter` (PyAutoGUI/MouseInfo needs it; `gui_rust.py` runs under the same interpreter via `sys.executable`).
+below, builds ModSync once and installs the full guide twice in lockstep, once with HoloPatcher
+and once with OdyPatcher (see [Paired installs](#paired-installs)). Every lane installs `python3-tk`
+and `python3-venv`: the HoloPatcher venv needs Tk, and the `gui` lanes' PyAutoGUI/MouseInfo imports
+`tkinter` (`gui_rust.py` runs under the same interpreter via `sys.executable`).
 See [ports.md](ports.md).
+
+**`manual`** — Installs the full guide by hand from `ci/<game>-manual-plan.json`, twice in lockstep:
+once with each mod's own patcher under Wine, once with OdyPatcher in its place (see
+[Paired installs](#paired-installs) and [manual-lane.md](manual-lane.md)).
+
+### Paired installs
+
+Each `install` and `manual` job runs two installs of the same guide at the same time, each on its own
+full copy of the game, and compares them as they go. `tools/modsync-ci/lockstep.py pair` starts both and
+coordinates them through barrier files:
+
+| Job | Side A | Side B | Pause point |
+| --- | --- | --- | --- |
+| `install` | ModSync with the newest `holopatcher` from PyPI | ModSync with the newest OdyPatcher release | after every patcher run |
+| `manual` | each mod's own patcher (TSLPatcher, HoloPatcher, ...) under Wine | OdyPatcher (`manual.py --odypatcher`) | after every plan step |
+
+Both patchers are fetched fresh in every run by `tools/modsync-ci/patchers.py fetch`; the versions used
+are in the step summary and in `patchers.json`. OdyPatcher comes from
+`kolto-labs/odypatcher/releases/latest`, checked against its `SHA256SUMS.txt`.
+
+In the `install` jobs ModSync runs HoloPatcher's command line (`ports.py --patcher-path`), and the
+program it runs is a small wrapper (`lockstep.py wrapper`) that runs the real patcher and then waits.
+When a side pauses, it waits until the other side has reached the same point. Then both game folders
+are compared: only files whose size, time or inode changed are read again, and only same-size changes
+are hashed (SHA-256). Names are compared without case, as the game reads them. `.modsync`
+(ModSync.ts's checkpoint store) is left out.
+
+Any difference stops both installs and fails that job only (`fail-fast: false`); so does a step that
+fails on one side only, a pair that never reaches a pause point, or a side that does not reach the next
+pause point in time (`install`: an hour, three hours for the first; `manual`: two hours, above the
+largest plan step deadline). A step that fails on both sides with equal folders is recorded
+(`failed_on_both`) and both go on, so ModSync's quarantine or `manual.py` decides. Each side's own
+output is printed in a group after the pair ends and kept in the diagnostics as `install.log`. The step summary
+names the first step that differed and each differing file; the differing files themselves go into the
+sealed diagnostics (`install`) or the sealed `lockstep-evidence.seal` in `manual-report-<game>`. A
+difference means one of the two patchers wrote something the other did not.
+
+Both installs need two game copies, so the jobs use `/mnt` when it has more free space than
+`$RUNNER_TEMP`. Each side has its own game folder, Wine prefix, temporary folder, X display and work
+folder; the `install` sides also get their own hard-linked view of the archives, because extraction
+writes next to them. `ports.py --command-timeout 18000` lets one ModSync command run for up to five
+hours, because barrier waits count against it.
 
 ### Mod archive sources
 
@@ -376,7 +421,8 @@ Names only.
 | `STEAM_GUARD_CODES` | secret, optional | Single-use Steam backup codes, tried after the other sign-ins fail |
 | `CACHE_ENCRYPTION_KEY` | secret | Seals and unseals the game cache, the `game-<game>-sealed` backup artifact and the artifact-store blobs (not the archive bucket) |
 | `GAME_SEED_URL_K1`, `GAME_SEED_KEY_K1`, `GAME_SEED_SHA256_K1` (and `_K2`) | secret, optional | Encrypted game seed tried before SteamCMD; the SHA-256 is optional ([steam.md](steam.md#game-seed)) |
-| `DIAGNOSTICS_ENCRYPTION_KEY` | secret | Seals the `install` lane report and convert log before upload ([ports.md](ports.md#diagnosing-a-coverage-failure)) |
+| `DIAGNOSTICS_ENCRYPTION_KEY` | secret | Seals the `install` lane reports, convert logs and lockstep evidence, and the `manual` lockstep evidence, before upload ([ports.md](ports.md#diagnosing-a-coverage-failure)) |
+| `ODYPATCHER_TOKEN` | secret, optional | Read access to the private `kolto-labs/odypatcher` releases; falls back to `MODSYNC_SOURCE_TOKEN` |
 | `MOD_CACHE_S3_ACCESS_KEY_ID`, `MOD_CACHE_S3_SECRET_ACCESS_KEY` | secret, optional | R2 read/write, `mods` job only |
 | `MOD_CACHE_S3_READ_ACCESS_KEY_ID`, `MOD_CACHE_S3_READ_SECRET_ACCESS_KEY` | secret, optional | R2 read only, `install` and `manual` |
 | `MOD_CACHE_S3_ENDPOINT` | secret, optional | S3-compatible (R2) endpoint |

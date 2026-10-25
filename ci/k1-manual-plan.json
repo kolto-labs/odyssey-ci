@@ -306,7 +306,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     },
     {
      "type": "copy",
@@ -397,7 +398,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -564,7 +566,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     },
     {
      "type": "copy",
@@ -705,7 +708,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -4332,7 +4336,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 2,
+     "namespace_index_evidence": "2 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     },
     {
      "type": "extract",
@@ -4412,7 +4418,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -4547,7 +4554,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 1,
+     "namespace_index_evidence": "1 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json). Guide: install the Community Patch-Compatible option."
     }
    ]
   },
@@ -4659,7 +4668,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 4,
+     "namespace_index_evidence": "4 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -4759,7 +4770,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -5924,7 +5937,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 1,
+     "namespace_index_evidence": "1 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -6350,7 +6365,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     },
     {
      "type": "copy",
@@ -8565,7 +8582,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -8733,7 +8752,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -8954,7 +8974,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -9056,7 +9077,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -9188,7 +9210,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -9499,7 +9523,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -9585,7 +9610,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -9671,7 +9697,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -9780,7 +9807,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 1,
+     "namespace_index_evidence": "1 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -9866,7 +9895,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -9952,7 +9982,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -10038,7 +10069,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -10147,7 +10179,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 1,
+     "namespace_index_evidence": "1 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -10237,7 +10271,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -10398,7 +10433,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -10488,7 +10525,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     },
     {
      "type": "rename",
@@ -10618,7 +10656,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     },
     {
      "type": "delete",
@@ -10721,7 +10761,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 2,
+     "namespace_index_evidence": "2 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     },
     {
      "type": "delete",
@@ -10823,7 +10865,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 1,
+     "namespace_index_evidence": "1 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ],
    "timeout_seconds": 2700
@@ -10910,7 +10954,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -10996,7 +11041,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -11082,7 +11128,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -11168,7 +11215,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -11291,7 +11339,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -11377,7 +11426,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     },
     {
      "type": "extract",
@@ -11473,7 +11523,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -11559,7 +11610,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -11659,7 +11711,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -11745,7 +11799,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -11842,7 +11897,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -11965,7 +12021,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -12074,7 +12131,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 1,
+     "namespace_index_evidence": "1 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -12160,7 +12219,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     },
     {
      "type": "extract",
@@ -12270,7 +12330,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -12356,7 +12418,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -12456,7 +12519,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -12542,7 +12607,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -12651,7 +12717,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 1,
+     "namespace_index_evidence": "1 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -12737,7 +12805,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -12823,7 +12892,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -12909,7 +12979,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -12995,7 +13066,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -13095,7 +13167,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -13195,7 +13269,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -13305,7 +13381,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 2,
+     "namespace_index_evidence": "2 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -13405,7 +13483,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -13551,7 +13631,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 1,
+     "namespace_index_evidence": "1 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -13637,7 +13719,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -13739,7 +13822,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -13825,7 +13909,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -13911,7 +13996,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -13997,7 +14083,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -14083,7 +14170,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -14169,7 +14257,8 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": null
     }
    ]
   },
@@ -14278,7 +14367,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 1,
+     "namespace_index_evidence": "1 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -14378,7 +14469,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 0,
+     "namespace_index_evidence": "0 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json)."
     }
    ]
   },
@@ -16984,7 +17077,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 3,
+     "namespace_index_evidence": "3 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json). Guide: install Options 3 and 5 (first run)."
     },
     {
      "type": "delete",
@@ -17090,7 +17185,9 @@
       {
        "wait_log": 600
       }
-     ]
+     ],
+     "namespace_index": 5,
+     "namespace_index_evidence": "5 Down key(s) to TSLPatcher's Select installation type dialog from its preselected first option, then OK; the dialog lists namespaces.ini [Namespaces] in file order, as OdyPatcher numbers them from 0. namespaces.ini itself is not in the CI evidence yet (manual-evidence of run 40140028316 holds only archive-map.json). Guide: install Options 3 and 5 (second run)."
     }
    ]
   },

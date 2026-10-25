@@ -225,7 +225,8 @@ class ExecuteTests(unittest.TestCase):
         return root, argparse.Namespace(
             binary=binary, input=source, game_dir=root / "game", archives=root / "archives",
             work_dir=root / "work", report=root / "report.json", timeout=60.0,
-            deselect=[], exclude_widescreen=False, private_worker=None)
+            deselect=[], exclude_widescreen=False, private_worker=None, patcher_path=None,
+            server_num=None)
 
     def run_execute(self, args, completed=None, application=None):
         result = {}
@@ -702,6 +703,50 @@ class WorkerFailureTests(unittest.TestCase):
         self.assertEqual(reason, "isolated_desktop_timeout")
         self.assertTrue(result["worker_diagnostics"]["timed_out"])
 
+    def test_server_num_and_patcher_path_reach_the_isolated_desktop(self):
+        root, args = self.prepare(document(block(BASE_ONE, "A"), block(BASE_TWO, "B")))
+        patcher = root / "holopatcher"
+        patcher.write_text("#!/bin/sh\n", encoding="utf-8")
+        patcher.chmod(0o755)
+        args.patcher_path, args.server_num = patcher, 200
+        launched = []
+        real = gui_rust.subprocess.Popen
+
+        def spy(command, **kwargs):
+            launched.append(command)
+            return real(["true"])
+
+        with mock.patch.object(gui_rust.shutil, "which", return_value="/bin/true"), \
+                mock.patch.object(gui_rust.subprocess, "Popen", spy), \
+                mock.patch.object(gui_rust, "stop"), \
+                mock.patch.object(gui_rust.gui_diag, "collect", return_value={"stage": "x", "phase": "x"}):
+            result = {}
+            with self.assertRaises(gui_rust.Blocked):
+                gui_rust.execute(args, result)
+        self.assertEqual(launched[0][:3], ["xvfb-run", "--auto-servernum", "--server-num=200"])
+        self.assertEqual(result["patcher"], {"engine": "HoloPatcher", "path": str(patcher.resolve())})
+
+    def test_default_xvfb_command_is_unchanged(self):
+        _, args = self.prepare(document(block(BASE_ONE, "A"), block(BASE_TWO, "B")))
+        launched = []
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                launched.append(command)
+                self.pid = 0
+
+            def wait(self, timeout=None):
+                return 1
+
+        with mock.patch.object(gui_rust.shutil, "which", return_value="/bin/true"), \
+                mock.patch.object(gui_rust.subprocess, "Popen", Process), \
+                mock.patch.object(gui_rust, "stop"), \
+                mock.patch.object(gui_rust.gui_diag, "collect", return_value={"stage": "x", "phase": "x"}):
+            with self.assertRaises(gui_rust.Blocked):
+                gui_rust.execute(args, {})
+        self.assertEqual(launched[0][:3], ["xvfb-run", "--auto-servernum",
+                                           "--server-args=-screen 0 1600x1200x24 -nolisten tcp"])
+
     def test_successful_run_has_no_diagnostics(self):
         _, args = self.prepare(document(block(BASE_ONE, "A"), block(BASE_TWO, "B")))
         result, error = self.run_execute(args, completed=2)
@@ -1118,7 +1163,7 @@ def default_pages():
 
 
 class InstallConfirmationFlowTests(unittest.TestCase):
-    def run_flow(self, **pages):
+    def run_flow(self, patcher_path=None, **pages):
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root)
         private = root / "private"
@@ -1159,7 +1204,7 @@ class InstallConfirmationFlowTests(unittest.TestCase):
                 return 0
 
         args = argparse.Namespace(binary=root / "modsync", game_dir=root / "game",
-                                  archives=root / "archives", timeout=600.0)
+                                  archives=root / "archives", timeout=600.0, patcher_path=patcher_path)
         result = {}
         output = io.StringIO()
         error = None
@@ -1241,6 +1286,32 @@ class InstallConfirmationFlowTests(unittest.TestCase):
         saved = json.loads((run.private / "install_confirmation-navigation.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["changed_frame"], changed)
         self.assertIn("install_confirmation_not_reached", run.output)
+
+    TRUST = "Trust this guide to run external programs"
+
+    def test_patcher_path_seeds_the_settings_and_trusts_processes_before_validation(self):
+        run = self.run_flow(
+            patcher_path=Path("/opt/holo/holopatcher"),
+            validation={"lines": [self.TRUST, "Run validation", "Analyze conflicts"], "buttons": {0: "trusted"}},
+            trusted={"lines": [self.TRUST, "Patcher backend", "Run validation"], "buttons": {2: "validated"}})
+        self.assertIsNone(run.error)
+        self.assertTrue(run.result["ui_completed"])
+        pages = [click[0] for click in run.screen.clicks]
+        self.assertLess(pages.index("validation"), pages.index("trusted"))
+        settings = json.loads((run.private / "settings/settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings, {"patcherEngine": "HoloPatcher",
+                                    "holopatcherExecutablePath": "/opt/holo/holopatcher"})
+
+    def test_trust_that_does_not_reveal_the_patcher_row_blocks(self):
+        run = self.run_flow(
+            patcher_path=Path("/opt/holo/holopatcher"),
+            validation={"lines": [self.TRUST, "Run validation"], "buttons": {}})
+        self.assertEqual(run.error, "external_programs_trust_not_enabled")
+
+    def test_without_patcher_path_nothing_is_trusted_or_seeded(self):
+        run = self.run_flow()
+        self.assertIsNone(run.error)
+        self.assertFalse((run.private / "settings/settings.json").exists())
 
     def test_failure_before_the_frame_changes_records_no_changed_frame(self):
         run = self.run_flow(review={"lines": ["Ready to Install"]})

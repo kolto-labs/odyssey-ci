@@ -226,7 +226,7 @@ class WorkflowAgreementTests(unittest.TestCase):
     def test_typescript_lanes_get_the_policy_flags_report_and_wine(self):
         text = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertNotIn("== rust ]]; then\n            policy", text)
-        self.assertIn('review=(--restore-report "$RUNNER_TEMP/restore-report.json")', text)
+        self.assertIn('"--restore-report", temp + "/restore-report.json"', text)
         wine = text[text.index("Install Wine for legacy patchers and Execute"):]
         self.assertIn("if: matrix.implementation == 'typescript'", wine[:200])
         self.assertIn("--no-install-recommends wine", wine[:400])

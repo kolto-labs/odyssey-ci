@@ -50,6 +50,52 @@ Supply a clean game and a lane-local copy of the archives; installers can modify
 their source directory. Use separate directories per lane. Work and report paths
 must not overlap any input. The adapter never acquires the game or downloads mods.
 
+### External patcher and two runs on one runner
+
+These options are off by default. Without them every command stays as described below.
+
+- `--patcher-path FILE` runs every patcher step through FILE. FILE must be an executable
+  outside the game and archives, and take HoloPatcher's unattended CLI
+  (`--install --game-dir D --tslpatchdata S [--namespace-option-index N] [--console]`).
+  The report records it under `patcher`.
+  - Rust CLI: `validate` and `install` get
+    `--patcher-engine holo-patcher --patcher FILE --allow-processes`.
+    `--allow-processes` is the only trust switch ModSync.rs has, so it also allows the
+    guide's Execute and Run steps.
+  - Rust GUI: `gui_rust.py --patcher-path FILE` writes `settings.json`
+    (`patcherEngine: HoloPatcher`, `holopatcherExecutablePath`) into the app's
+    `--settings-dir`. It then ticks "Trust this guide to run external programs" before
+    "Run validation", and checks that the "Patcher backend" row appears.
+  - TypeScript CLI: one private settings file (`patcherEngine: HoloPatcher`,
+    `holoPatcherPath`) is passed through `MODSYNC_SETTINGS_PATH` to every command.
+  - TypeScript GUI: `gui_typescript.py --patcher-path FILE` seeds the same keys into the
+    server settings. The worker fails with `patcher_settings_not_applied` if
+    `/api/settings` does not report them.
+- `--build-only` builds into `--work-dir` and writes `<work-dir>/build.json`. It needs only
+  `--implementation`, `--mode`, `--source`, `--work-dir` and `--report`, and ends with
+  status `built`. Rust builds into `<work-dir>/target`. TypeScript runs `pnpm build` in
+  `--source`.
+- `--prebuilt DIR` takes the build recorded in DIR instead of building. The implementation,
+  source and output hash must match the record.
+- `--temp-dir DIR` sets `TMPDIR`, `TMP` and `TEMP` for every command. This covers patcher
+  staging, archive extraction and xvfb-run.
+- `--baseline-dir DIR` is a pristine copy of the game that the caller owns. The quarantine
+  restores from it instead of making its own copy, so each side saves one game-sized copy.
+  The lane only reads it. It must match the game's file list and sizes when the lane starts.
+- `--display-base N` (Rust GUI only) is passed to xvfb-run as `--server-num=N`.
+- `--no-checkpoints` (TypeScript CLI only) installs without the checkpoint store under
+  `<game>/.modsync`. A retry then recovers through the baseline restore alone.
+
+For two concurrent runs, build once with `--build-only` and give each side `--prebuilt`.
+Each side also needs its own game, archives copy (`cp -al` is enough), work dir, report,
+temp dir, patcher and, for the Rust GUI, display base. They can share the source, the
+build, the guide, the archive map and a read-only `--baseline-dir`. Sides must not share
+the archives directory itself:
+
+- extraction writes into it
+- the TypeScript install locks it
+- HoloPatcher writes `installlog.txt` beside `tslpatchdata`
+
 ## What each implementation runs
 
 Every run builds the port and converts the Markdown guide afresh; existing TOMLs

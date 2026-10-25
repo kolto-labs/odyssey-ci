@@ -62,6 +62,11 @@ EDIT_GATE_PATTERN = re.compile(r"Pause\s*sharing\s*before\s*editing", re.IGNOREC
 SUMMARY_NAV_LABEL = "Summary / selection"
 SUMMARY_NAV_PATTERN = r"Summary\s*\S{0,2}\s*sel\w*"
 NAV_WINDOW_SECONDS = 90
+# With --patcher-path: the validation page's per-run trust switch (src/ui.rs, validation page) and the
+# row it reveals once on (src/ui.rs, "Patcher backend"); validation needs the trust to accept a patcher.
+TRUST_PROCESSES_LABEL = "Trust this guide to run external programs"
+TRUST_PROCESSES_MARKER = "Patcher backend"
+PATCHER_SETTINGS_NAME = "settings.json"
 FIRST_NAV_WINDOW_SECONDS = 300
 NAV_RETRY_SECONDS = 10
 NAV_BUSY_PROBE_SECONDS = 30
@@ -367,6 +372,13 @@ def save(path, value):
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
+
+
+def seed_patcher_settings(settings, patcher):
+    """settings.json in --settings-dir: the HoloPatcher engine at `patcher` (src/profiles.rs decode)."""
+    settings.mkdir(mode=0o700, parents=True, exist_ok=True)
+    value = {"patcherEngine": "HoloPatcher", "holopatcherExecutablePath": str(patcher)}
+    (settings / PATCHER_SETTINGS_NAME).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
 def seed_telemetry_config(settings):
@@ -943,6 +955,8 @@ def drive(args, private, result):
                "--source-dir", str(args.archives),
                "--settings-dir", str(private / "settings")]
     seed_telemetry_config(private / "settings")
+    if args.patcher_path is not None:
+        seed_patcher_settings(private / "settings", args.patcher_path)
     save(private / "command.json", command)
     environment = os.environ.copy()
     for name in ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"):
@@ -970,6 +984,11 @@ def drive(args, private, result):
                 wait_for_selection_summary(observe_summary, plan, result, private)
             transition("validation_page", VALIDATION_NAV_LABEL, VALIDATION_PAGE_MARKER,
                        "validation_page_not_reached")
+            if args.patcher_path is not None:
+                # Before validation: toggling the trust clears an earlier validation result.
+                click(TRUST_PROCESSES_LABEL, window=NAV_WINDOW_SECONDS)
+                if locate(TRUST_PROCESSES_MARKER, optional=True, window=NAV_WINDOW_SECONDS) is None:
+                    raise Blocked("external_programs_trust_not_enabled")
             transition("validation_start", "Run validation", VALIDATION_STARTED_MARKER,
                        "validation_not_started")
             result["stage"] = "validation"
@@ -1080,6 +1099,11 @@ def execute(args, result):
     result["evidence_directory"] = str(private)
     result["input_sha256"] = digest(args.input)
     result["binary_sha256"] = digest(args.binary)
+    if args.patcher_path is not None:
+        args.patcher_path = args.patcher_path.resolve(strict=True)
+        if not args.patcher_path.is_file() or not os.access(args.patcher_path, os.X_OK):
+            raise Blocked("patcher_path_not_executable")
+        result["patcher"] = {"engine": "HoloPatcher", "path": str(args.patcher_path)}
     result["component_count"] = len(components)
     result["coverage"] = "subset" if plan["subset"] else "full"
     result["expected_components"] = len(plan["expected_components"])
@@ -1097,8 +1121,9 @@ def execute(args, result):
             reconcile_selection(plan, selected, counts, result)
         finally:
             save(private / "selection-plan.json", plan)
-    command = ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1600x1200x24 -nolisten tcp",
-               sys.executable, str(Path(__file__).resolve()),
+    command = ["xvfb-run", "--auto-servernum",
+               *([] if args.server_num is None else ["--server-num=%d" % args.server_num]),
+               "--server-args=-screen 0 1600x1200x24 -nolisten tcp", sys.executable, str(Path(__file__).resolve()),
                *sys.argv[1:], "--private-worker", str(private)]
     process = None
     code = None
@@ -1154,6 +1179,11 @@ def main():
                         help="deselect widescreen-only components in the private copy and report them "
                              "as not covered; without it a selected widescreen component is refused")
     parser.add_argument("--timeout", type=float, required=True, help="Total GUI time budget in seconds")
+    parser.add_argument("--patcher-path", type=Path,
+                        help="HoloPatcher-compatible executable: seeded as the GUI's patcher and trusted "
+                             "on the validation page")
+    parser.add_argument("--server-num", type=int,
+                        help="first X display number xvfb-run tries (default: xvfb-run's own)")
     parser.add_argument("--private-worker", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     os.umask(0o077)
@@ -1184,6 +1214,8 @@ def main():
             gui_diag.mark_phase(args.private_worker, "preflight")
             for name in ("binary", "input", "game_dir", "archives"):
                 setattr(args, name, getattr(args, name).resolve(strict=True))
+            if args.patcher_path is not None:
+                args.patcher_path = args.patcher_path.resolve(strict=True)
             drive(args, args.private_worker, result)
         else:
             execute(args, result)

@@ -5750,5 +5750,240 @@ class GameChangeTests(unittest.TestCase):
         self.assertNotEqual(before, ports.game_file_state(root))
 
 
+class ConcurrentLaneOptionTests(unittest.TestCase):
+    """--patcher-path, --build-only/--prebuilt, --temp-dir, --baseline-dir, --display-base, --no-checkpoints."""
+    run_policy_lane = ExecuteCommandTests.run_policy_lane
+    run_gui_lane = ExecuteCommandTests.run_gui_lane
+    options = staticmethod(lambda root: {})
+
+    def prepare(self, game_folder):
+        root, args = ExecuteCommandTests.prepare(self, game_folder)
+        self.root = root
+        for key, value in self.options(root).items():
+            setattr(args, key, value)
+        return root, args
+
+    def patcher(self, root):
+        path = root / "holopatcher"
+        path.write_text("#!/bin/sh\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    def with_patcher(self, **extra):
+        self.options = lambda root: dict(patcher_path=self.patcher(root), **extra)
+
+    def run_typescript(self, mode="cli"):
+        _, args = self.prepare("k2")
+        args.implementation = "typescript"
+        args.mode = mode
+        args.review_manifest = args.work_dir.parent / "review.json"
+        args.guide.write_text(GUIDE.replace("## CRITICAL: Platform Notes\n\n### Platform Fix A\n\n", ""),
+                              encoding="utf-8")
+        text = document(component("Mod One", "20000000-0000-0000-0000-000000000001"),
+                        component("Mod Two", "20000000-0000-0000-0000-000000000002"))
+        calls = []
+
+        def fake_run(command, source, private, stage, report, env):
+            calls.append((stage, list(command), dict(env)))
+            if stage == "convert":
+                (private / "converted.toml").write_text(text, encoding="utf-8")
+            if stage == "gui":
+                raise ports.Blocked("gui_stopped_by_test")
+
+        report = {"commands": []}
+        error = None
+        with mock.patch.object(ports, "run", fake_run), \
+                mock.patch.object(ports, "review_manifest", return_value=[]), \
+                mock.patch.dict(ports.os.environ):
+            ports.os.environ.pop(ports.TYPESCRIPT_SETTINGS_ENV, None)
+            try:
+                ports.execute(args, report)
+            except ports.Blocked as blocked:
+                error = str(blocked)
+        return calls, report, error
+
+    def test_rust_cli_validates_and_installs_through_the_patcher_path(self):
+        self.with_patcher()
+        commands, report, error = self.run_policy_lane("cli")
+        self.assertIsNone(error)
+        patcher = str((self.root / "holopatcher").resolve())
+        staged = dict(commands)
+        for stage in ("validate", "install"):
+            command = staged[stage]
+            self.assertEqual(command[command.index("--patcher-engine"):command.index("--patcher-engine") + 4],
+                             ["--patcher-engine", "holo-patcher", "--patcher", patcher])
+            self.assertIn("--allow-processes", command)
+            self.assertNotIn("ody-patcher", command)
+        self.assertEqual(report["patcher"], {"engine": "holo-patcher", "path": patcher})
+
+    def test_without_the_new_options_commands_and_report_are_unchanged(self):
+        commands, report, error = self.run_policy_lane("cli")
+        self.assertIsNone(error)
+        for stage, command in commands:
+            for flag in ("--patcher", "--patcher-engine", "--allow-processes", "--no-checkpoints"):
+                self.assertNotIn(flag, command, stage)
+        self.assertEqual([stage for stage, _ in commands][0], "build")
+        self.assertNotIn("patcher", report)
+        self.assertEqual(report["quarantine"]["baseline"]["status"], "copied")
+        calls, report, error = self.run_typescript()
+        self.assertIsNone(error)
+        for stage, command, env in calls:
+            self.assertNotIn(ports.TYPESCRIPT_SETTINGS_ENV, env, stage)
+            self.assertNotIn("--no-checkpoints", command, stage)
+
+    def test_typescript_cli_reads_the_patcher_from_one_settings_file_in_every_command(self):
+        temp = []
+        self.options = lambda root: dict(patcher_path=self.patcher(root), no_checkpoints=True,
+                                         temp_dir=temp.append(root / "tmp") or root / "tmp")
+        calls, report, error = self.run_typescript()
+        self.assertIsNone(error)
+        patcher = str((self.root / "holopatcher").resolve())
+        settings = {env[ports.TYPESCRIPT_SETTINGS_ENV] for _, _, env in calls}
+        self.assertEqual(len(settings), 1)
+        self.assertEqual(json.loads(Path(settings.pop()).read_text(encoding="utf-8")),
+                         {"patcherEngine": "HoloPatcher", "holoPatcherPath": patcher})
+        self.assertEqual(report["patcher"], {"engine": "HoloPatcher", "path": patcher})
+        installs = [command for stage, command, _ in calls if stage.startswith("install_")]
+        self.assertEqual(len(installs), 2)
+        for command in installs:
+            self.assertEqual(command.count("--no-checkpoints"), 1)
+            self.assertIn("--ci-physical-install", command)
+        for stage, _, env in calls:
+            for name in ("TMPDIR", "TMP", "TEMP"):
+                self.assertEqual(env[name], str(temp[0].resolve()), stage)
+        self.assertTrue(temp[0].is_dir())
+
+    def test_gui_lanes_pass_the_patcher_path_and_display_base_to_the_drivers(self):
+        self.with_patcher()
+        calls, _, error = self.run_typescript("gui")
+        self.assertEqual(error, "gui_stopped_by_test")
+        gui = dict((stage, command) for stage, command, _ in calls)["gui"]
+        self.assertEqual(gui[gui.index("--patcher-path") + 1], str((self.root / "holopatcher").resolve()))
+        self.assertNotIn("--server-num", gui)
+        self.with_patcher(display_base=100)
+        commands, _, error = self.run_gui_lane({})
+        self.assertIsNone(error)
+        gui = dict(commands)["gui"]
+        self.assertEqual(gui[gui.index("--patcher-path") + 1], str((self.root / "holopatcher").resolve()))
+        self.assertEqual(gui[gui.index("--server-num") + 1], "100")
+
+    def test_patcher_path_must_be_an_executable_outside_the_install_roots(self):
+        self.options = lambda root: {"patcher_path": root / "game" / "holo"}
+        _, args = self.prepare("k1")
+        args.implementation = "rust"
+        (args.game_dir / "holo").write_text("", encoding="utf-8")
+        with self.assertRaises(ports.Blocked) as caught:
+            ports.execute(args, {"commands": []})
+        self.assertEqual(str(caught.exception), "patcher_path_not_executable")
+        (args.game_dir / "holo").chmod(0o755)
+        with self.assertRaises(ports.Blocked) as caught:
+            ports.execute(args, {"commands": []})
+        self.assertEqual(str(caught.exception), "patcher_path_inside_install_roots")
+
+    def test_baseline_dir_is_used_in_place_and_never_deleted(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, root)
+        for name in ("game", "pristine", "private"):
+            (root / name / "Override").mkdir(parents=True)
+            (root / name / "chitin.key").write_text("key", encoding="utf-8")
+        report = {"quarantine": {}}
+        baseline = ports.take_baseline(root / "game", root / "private", report, root / "pristine")
+        self.assertEqual(baseline[0], root / "pristine")
+        self.assertEqual(report["quarantine"]["baseline"]["status"], "caller_copy")
+        self.assertFalse((root / "private" / "game-baseline").exists())
+        (root / "game" / "Override" / "new.2da").write_text("x", encoding="utf-8")
+        ports.restore_game(root / "game", *baseline)
+        self.assertFalse((root / "game" / "Override" / "new.2da").exists())
+        ports.discard_baseline(baseline, root / "private")
+        self.assertTrue((root / "pristine" / "chitin.key").is_file())
+        own = ports.take_baseline(root / "game", root / "private", {"quarantine": {}})
+        ports.discard_baseline(own, root / "private")
+        self.assertFalse(own[0].exists())
+        (root / "pristine" / "extra").write_text("x", encoding="utf-8")
+        with self.assertRaises(ports.Blocked) as caught:
+            ports.take_baseline(root / "game", root / "private", {"quarantine": {}}, root / "pristine")
+        self.assertEqual(str(caught.exception), "baseline_dir_differs_from_game")
+
+    def test_rust_install_lane_uses_the_baseline_dir(self):
+        def pristine(root):
+            (root / "pristine").mkdir()
+            return {"baseline_dir": root / "pristine"}
+
+        self.options = pristine
+        commands, report, error = self.run_policy_lane("cli")
+        self.assertIsNone(error)
+        self.assertEqual(report["quarantine"]["baseline"]["status"], "caller_copy")
+        self.assertTrue((self.root / "pristine").is_dir())
+
+    def build_only(self, implementation="rust"):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, root)
+        (root / "source/packages/cli/src").mkdir(parents=True)
+        (root / "source/Cargo.toml").write_text("", encoding="utf-8")
+        (root / "source/packages/cli/src/main.ts").write_text("", encoding="utf-8")
+        stages = []
+
+        def fake_run(command, source, private, stage, report, env):
+            stages.append((stage, command, env.get("CARGO_TARGET_DIR")))
+            if implementation == "rust":
+                binary = Path(env["CARGO_TARGET_DIR"]) / "debug/modsync"
+                binary.parent.mkdir(parents=True)
+                binary.write_text("binary", encoding="utf-8")
+                binary.chmod(0o755)
+            else:
+                (Path(source) / "packages/cli/dist").mkdir(parents=True)
+                (Path(source) / "packages/cli/dist/main.js").write_text("js", encoding="utf-8")
+
+        argv = ["--implementation", implementation, "--mode", "cli", "--build-only",
+                "--source", str(root / "source"), "--work-dir", str(root / "build"),
+                "--report", str(root / "build-report.json")]
+        with mock.patch.object(ports, "run", fake_run), mock.patch.object(ports, "print_diagnostics"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = ports.main(argv)
+        return root, code, json.loads((root / "build-report.json").read_text(encoding="utf-8")), stages
+
+    def test_build_only_records_the_build_and_prebuilt_reuses_it(self):
+        root, code, report, stages = self.build_only()
+        self.assertEqual((code, report["status"]), (0, "built"))
+        self.assertEqual([stage for stage, _, _ in stages], ["build"])
+        self.assertEqual(stages[0][2], str((root / "build/target").resolve()))
+        binary = str((root / "build/target/debug/modsync").resolve())
+        self.assertEqual(report["build"]["command"], [binary])
+        self.assertEqual(ports.prebuilt_command(root / "build", "rust", (root / "source").resolve(), {}),
+                         [binary])
+        with self.assertRaises(ports.Blocked) as caught:
+            ports.prebuilt_command(root / "build", "typescript", (root / "source").resolve(), {})
+        self.assertEqual(str(caught.exception), "prebuilt_record_mismatch")
+        Path(binary).write_text("changed", encoding="utf-8")
+        with self.assertRaises(ports.Blocked) as caught:
+            ports.prebuilt_command(root / "build", "rust", (root / "source").resolve(), {})
+        self.assertEqual(str(caught.exception), "prebuilt_output_changed")
+        root, code, report, _ = self.build_only("typescript")
+        self.assertEqual((code, report["status"]), (0, "built"))
+        self.assertEqual(report["build"]["command"],
+                         ["node", str((root / "source/packages/cli/dist/main.js").resolve())])
+
+    def test_prebuilt_lane_skips_the_build_and_runs_the_recorded_binary(self):
+        build, _, _, _ = self.build_only()
+        source = (build / "source").resolve()
+        self.options = lambda root: {"prebuilt": build / "build", "source": source}
+        commands, report, error = self.run_policy_lane("cli")
+        self.assertIsNone(error)
+        self.assertNotIn("build", [stage for stage, _ in commands])
+        self.assertEqual(dict(commands)["install"][0], str((build / "build/target/debug/modsync").resolve()))
+        self.assertEqual(report["build"]["prebuilt"], str((build / "build").resolve()))
+
+    def test_main_requires_install_inputs_unless_build_only_and_scopes_lane_options(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, root)
+        base = ["--implementation", "rust", "--mode", "cli", "--source", str(root),
+                "--work-dir", str(root / "w"), "--report", str(root / "r.json")]
+        for extra in ([], ["--build-only", "--prebuilt", str(root)],
+                      ["--build-only", "--no-checkpoints"], ["--build-only", "--display-base", "100"]):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                ports.main(base + extra)
+            self.assertEqual(caught.exception.code, 2, extra)
+
+
 if __name__ == "__main__":
     unittest.main()
