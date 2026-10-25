@@ -42,8 +42,11 @@ def discover_seven_zip():
     return None
 
 
-def seed_settings(private, seven_zip):
+def seed_settings(private, seven_zip, patcher=None):
     settings = {"sevenZipPath": seven_zip} if seven_zip else {}
+    if patcher:
+        # createPatcher (packages/core/src/install/patcherPort.ts) matches the engine name exactly.
+        settings.update(patcherEngine="HoloPatcher", holoPatcherPath=patcher)
     save(private / "settings.json", settings)
     return settings
 
@@ -219,8 +222,9 @@ try {
     if (!(await updated).ok()) fail('directory_settings_rejected');
   }
   const settings = await read('/api/settings');
-  await evidence('settings-observed.json', {kotorDirectory: settings.kotorDirectory, modDirectory: settings.modDirectory, checkpointDirectory: settings.checkpointDirectory, sevenZipConfigured: Boolean(settings.sevenZipPath)});
+  await evidence('settings-observed.json', {kotorDirectory: settings.kotorDirectory, modDirectory: settings.modDirectory, checkpointDirectory: settings.checkpointDirectory, sevenZipConfigured: Boolean(settings.sevenZipPath), patcherEngine: settings.patcherEngine});
   if (config.seven_zip_path && settings.sevenZipPath !== config.seven_zip_path) fail('seven_zip_path_not_applied');
+  if (config.patcher_path && (settings.patcherEngine !== 'HoloPatcher' || settings.holoPatcherPath !== config.patcher_path)) fail('patcher_settings_not_applied');
   if (settings.kotorDirectory !== config.game_dir || settings.modDirectory !== config.archives) fail('workspace_binding_mismatch');
   if (!settings.createCheckpoints) fail('physical_receipt_requires_checkpoints');
   for (let step = 0; step < 12; step++) {
@@ -532,14 +536,22 @@ def execute(args, result):
         directory = private / name.lower()
         directory.mkdir(mode=0o700)
         environment[name] = str(directory)
-    for name in ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "NODE_OPTIONS"):
+    for name in ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "NODE_OPTIONS",
+                 "MODSYNC_SETTINGS_PATH"):
         environment.pop(name, None)
     config = {name: str(getattr(args, name)) for name in ("source", "input", "game_dir", "archives")}
     config["private"] = str(private)
     config["choices"] = dict(getattr(args, "choices", None) or {})
     seven_zip = discover_seven_zip()
     config["seven_zip_path"] = seven_zip
-    seed_settings(private, seven_zip)
+    config["patcher_path"] = None
+    if getattr(args, "patcher_path", None) is not None:
+        patcher = args.patcher_path.resolve(strict=True)
+        if not patcher.is_file() or not os.access(patcher, os.X_OK):
+            raise Blocked("patcher_path_not_executable")
+        config["patcher_path"] = str(patcher)
+        result["patcher"] = {"engine": "HoloPatcher", "path": str(patcher)}
+    seed_settings(private, seven_zip, config["patcher_path"])
     result["seven_zip"] = Path(seven_zip).name if seven_zip else None
     if seven_zip:
         print("gui_typescript: native 7-Zip fallback enabled: " + Path(seven_zip).name, flush=True)
@@ -613,6 +625,9 @@ def main():
     for name in ("source", "input", "game-dir", "archives", "work-dir", "report"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=3600, help="Total UI time budget in seconds")
+    parser.add_argument("--patcher-path", type=Path,
+                        help="HoloPatcher-compatible executable, seeded as patcherEngine HoloPatcher and "
+                             "holoPatcherPath")
     parser.add_argument("--choice", dest="choice_pairs", action="append", default=[], type=parse_choice,
                         metavar="GUID=ANSWER",
                         help="Reviewed answer for the install prompt of one instruction GUID; repeatable")

@@ -76,6 +76,35 @@ class WorkerFailureTests(unittest.TestCase):
         self.assertEqual(self.worker_config["seven_zip_path"], "/opt/tool/7z")
         self.assertEqual(result["seven_zip"], "7z")
 
+    def test_patcher_path_is_seeded_as_the_holopatcher_engine_and_checked_by_the_worker(self):
+        patcher = self.root / "holopatcher"
+        patcher.write_text("#!/bin/sh\n", encoding="utf-8")
+        patcher.chmod(0o755)
+        self.args.patcher_path = patcher
+        with mock.patch.dict(gui_typescript.os.environ, {"MODSYNC_SETTINGS_PATH": "/elsewhere.json"}):
+            result, _ = self.run_execute("x\n", 1, tools={})
+        self.assertEqual(self.seeded_settings,
+                         {"patcherEngine": "HoloPatcher", "holoPatcherPath": str(patcher.resolve())})
+        self.assertEqual(self.worker_config["patcher_path"], str(patcher.resolve()))
+        self.assertEqual(result["patcher"], {"engine": "HoloPatcher", "path": str(patcher.resolve())})
+        self.assertNotIn("MODSYNC_SETTINGS_PATH", self.worker_env)
+        self.assertIn("fail('patcher_settings_not_applied')", gui_typescript.WORKER)
+
+    def test_without_patcher_path_the_settings_have_no_patcher_keys(self):
+        self.run_execute("x\n", 1, tools={})
+        self.assertEqual(self.seeded_settings, {})
+        self.assertIsNone(self.worker_config["patcher_path"])
+
+    def test_patcher_path_that_is_not_executable_blocks(self):
+        patcher = self.root / "holopatcher"
+        patcher.write_text("", encoding="utf-8")
+        patcher.chmod(0o644)
+        self.args.patcher_path = patcher
+        with mock.patch.object(gui_typescript.shutil, "which", return_value="/usr/bin/node"), \
+                self.assertRaises(gui_typescript.Blocked) as caught:
+            gui_typescript.execute(self.args, {})
+        self.assertEqual(str(caught.exception), "patcher_path_not_executable")
+
     def test_seven_zip_search_order_prefers_the_standalone_binary(self):
         result, _ = self.run_execute("x\n", 1, tools={"7zz": "/opt/tool/7zz", "7z": "/opt/tool/7z"})
         self.assertEqual(self.seeded_settings, {"sevenZipPath": "/opt/tool/7zz"})

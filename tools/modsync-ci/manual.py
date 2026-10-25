@@ -140,13 +140,45 @@ staging cannot fit, live state and snapshot remain intact. Recovery has no
 timeout. A hard kill,
 power loss, uncooperative process or external tree writer needs operator recovery;
 the pending report and retained snapshot are the recovery evidence, not success.
-Exit 0: complete or partial (see report status); 1: failed/blocked (consult private
-report). No resume or commit.
+
+--odypatcher PATH runs every patcher and gui_patcher op as `PATH --install --game-dir
+GAME --tslpatchdata DIR [--namespace-option-index N] --console`, natively, without Wine,
+in the op's cwd; every other op runs exactly as without it. The checks on the game stay
+(expected_files, expected_changes, the changed manifest, receipts); the original
+patcher's sha256, success log, markers, failure regex, wine_registry and actions are
+not used. OdyPatcher's exit code decides (0 ok; 3/4/5/6 refusals, 7 stopped partway,
+8 completed with errors; any nonzero fails) and any "[Error]" line it prints fails
+the op as well. A delete of an original patcher's success log is missing_ok, since
+OdyPatcher writes none of them. DIR and N come from reviewed fields, else from the op:
+  namespace_index: N or null?, namespace_index_evidence: TEXT?, tslpatchdata: PATH?,
+  odypatcher_exempt: TEXT?   (optional on patcher and gui_patcher, checked in every mode)
+patcher ops take DIR and N from argv (--tslpatchdata, --namespace-option-index; no
+index flag means none). gui_patcher ops take DIR as the patcher's own folder and N from
+the actions: TSLPatcher's "Select installation type" dialog lists namespaces.ini in file
+order (as OdyPatcher numbers them) with the first preselected, so N is the number of
+Down keys sent to it, and null (no index) when no action touches it. A namespace_index
+must agree with what the argv or actions give; where they do not determine N (any other
+key or text sent to the dialog) it needs namespace_index_evidence. odypatcher_exempt (a
+reviewed reason; e.g. a non-TSLPatcher installer) runs the original op unchanged. Before
+anything is installed the report gets odypatcher {path, sha256, counts, exempt,
+unresolved}: every op without inputs is listed (and warned) there and fails with "no
+reviewed namespace_index" (or tslpatchdata) when its step is reached.
+Lockstep pair: after every step, executed or omitted, manual.py calls
+lockstep.Barrier().reach(step id, label=source_heading, exit=0|1, error=reason) from the
+sibling lockstep.py (a no-op without LOCKSTEP_BARRIER_DIR). A failed step reaches it
+before rollback, so the coordinator diffs what the failure left. If reach answers stop,
+the report status is "stopped_by_pair" (a failed step is left unrestored,
+"failed_not_restored") and the exit is 1. --no-snapshot (only with
+LOCKSTEP_BARRIER_DIR) takes no snapshot and no rollback reserve: in a pair any failure
+stops both sides and the game copy is thrown away, so the snapshot is never restored.
+Exit 0: complete or partial (see report status); 1: failed/blocked/stopped_by_pair
+(consult private report). No resume or commit.
 """
 
 import argparse
 import ctypes
 import hashlib
+import importlib.util
 import json
 import logging
 import math
@@ -761,13 +793,15 @@ def validate_operation(operation, roots):
                 path_token(token, roots, ("game",))
             require(operation.get("missing_ok", False) is True, "if_any_exists requires missing_ok: true")
     elif kind == "patcher":
-        fields(operation, PATCHER_FIELDS, ("expected_files", "expected_changes"))
+        fields(operation, PATCHER_FIELDS, ("expected_files", "expected_changes") + ODY_FIELDS)
         validate_patcher_fields(operation, roots)
+        validate_ody_fields(operation, roots)
     elif kind == "gui_patcher":
         fields(operation, PATCHER_FIELDS + ("actions",),
-               ("expected_files", "expected_changes", "wine_registry"))
+               ("expected_files", "expected_changes", "wine_registry") + ODY_FIELDS)
         validate_patcher_fields(operation, roots)
         validate_gui_fields(operation)
+        validate_ody_fields(operation, roots)
     else:
         raise Blocked("unsupported operation")
 
@@ -872,6 +906,127 @@ def validate_patcher_fields(operation, roots):
     require(expected or operation.get("expected_changes") == "changed_manifest",
             "patcher requires expected files or changed manifest proof")
     require(operation["success_log"] not in expected, "installer log is not an expected game effect")
+
+
+ODY_FIELDS = ("namespace_index", "namespace_index_evidence", "tslpatchdata", "odypatcher_exempt")
+SELECTION_WINDOW = "^TSLPatcher - Select installation type$"
+UNRESOLVED = "unresolved"
+ODY_EXIT = {1: "unknown startup error", 2: "bad arguments", 3: "refused: no namespaces.ini or changes.ini",
+            4: "refused: namespace index out of range", 5: "refused: changes.ini not found",
+            6: "refused: install unsafe", 7: "stopped partway by an exception",
+            8: "install completed with errors"}
+ODY_OUTPUT_LIMIT = 16 << 20
+ODY_ERROR_LINES = 5
+
+
+def validate_ody_fields(operation, roots):
+    """Reviewed OdyPatcher inputs; checked in every mode so a stale value never waits for --odypatcher."""
+    for key in ("namespace_index_evidence", "odypatcher_exempt"):
+        if key in operation:
+            require(isinstance(operation[key], str) and operation[key].strip() and operation[key].isprintable(),
+                    key + " must be a nonempty printable string")
+    if "odypatcher_exempt" in operation:
+        require(not any(key in operation for key in ODY_FIELDS[:3]),
+                "odypatcher_exempt operation must not declare OdyPatcher inputs")
+    if "tslpatchdata" in operation:
+        path_token(operation["tslpatchdata"], roots, ("archives", "extract"))
+    if "namespace_index_evidence" in operation:
+        require("namespace_index" in operation, "namespace_index_evidence requires namespace_index")
+    if "namespace_index" in operation:
+        index = operation["namespace_index"]
+        require(index is None or (type(index) is int and index >= 0),
+                "namespace_index must be null or a non-negative integer")
+        derived = (selection_index(operation) if operation["type"] == "gui_patcher"
+                   else argv_index(command_arguments(operation, roots)[2]))
+        require(derived != UNRESOLVED or "namespace_index_evidence" in operation,
+                "namespace_index needs namespace_index_evidence where the reviewed actions do not determine it")
+        require(derived in (UNRESOLVED, index), "namespace_index disagrees with the reviewed %s" % (
+                    "selection keys" if operation["type"] == "gui_patcher" else "--namespace-option-index"))
+
+
+def flag_value(argv, flag):
+    for index, part in enumerate(argv):
+        if part == flag and index + 1 < len(argv):
+            return argv[index + 1]
+        if part.startswith(flag + "="):
+            return part[len(flag) + 1:]
+    return None
+
+
+def argv_index(argv):
+    """The original CLI patcher's --namespace-option-index (None without one)."""
+    value = flag_value(argv, "--namespace-option-index")
+    if value is None:
+        return None
+    return int(value) if re.fullmatch(r"[0-9]+", value) else UNRESOLVED
+
+
+def selection_index(operation):
+    """The option TSLPatcher's installation-type dialog is left on by the reviewed actions. The
+    dialog lists namespaces.ini [Namespaces] in file order with the first one preselected (OdyPatcher
+    numbers them in the same order), and the reviewed click on it is its OK button. None when no
+    action touches the dialog (no choice was made), the number of Down presses when only Down is sent
+    to it, else UNRESOLVED."""
+    touched, downs = False, 0
+    for action in operation["actions"]:
+        if action.get("window", action.get("wait_window")) != SELECTION_WINDOW:
+            continue
+        touched = True
+        if "key" in action:
+            if any(key != "Down" for key in action["key"]):
+                return UNRESOLVED
+            downs += len(action["key"])
+        elif "type" in action:
+            return UNRESOLVED
+    return downs if touched else None
+
+
+def ody_inputs(operation, roots):
+    """(tslpatchdata folder, namespace index or None) for OdyPatcher in place of this patcher op.
+    CLI ops take both from the reviewed argv, gui ops from the patcher's own folder (TSLPatcher reads
+    the tslpatchdata next to it) and the selection keys; reviewed plan fields win. Blocked if missing."""
+    patcher, _, argv = command_arguments(operation, roots)
+    gui = operation["type"] == "gui_patcher"
+    if "tslpatchdata" in operation:
+        folder = path_token(operation["tslpatchdata"], roots, ("archives", "extract"))
+    elif gui:
+        folder = patcher.parent
+    else:
+        value = flag_value(argv, "--tslpatchdata")
+        require(value, "no reviewed tslpatchdata (argv has no --tslpatchdata and the plan none)")
+        folder = Path(value)
+    index = operation["namespace_index"] if "namespace_index" in operation else (
+        selection_index(operation) if gui else argv_index(argv))
+    require(index != UNRESOLVED, "no reviewed namespace_index (the %s do not determine the option)"
+            % ("selection keys" if gui else "argv --namespace-option-index"))
+    return folder, index
+
+
+def ody_preflight(plan, roots):
+    """Every patcher op OdyPatcher would run, before anything is installed: the counts, the reviewed
+    exemptions and each op whose inputs are missing (it fails when its step is reached)."""
+    summary = {"patcher_operations": 0, "resolved": 0, "exempt": [], "unresolved": []}
+    for step in plan["steps"]:
+        for number, operation in enumerate(step.get("operations", []), 1):
+            if operation["type"] not in ("patcher", "gui_patcher"):
+                continue
+            summary["patcher_operations"] += 1
+            where = {"step": step["id"], "operation": number}
+            if "odypatcher_exempt" in operation:
+                summary["exempt"].append(dict(where, reason=operation["odypatcher_exempt"]))
+                continue
+            try:
+                ody_inputs(operation, roots)
+                summary["resolved"] += 1
+            except Blocked as error:
+                summary["unresolved"].append(dict(where, error=str(error)))
+    return summary
+
+
+def ody_logs(plan):
+    """Original patchers' success logs: OdyPatcher writes none of them, so deleting one is missing_ok."""
+    return {operation["success_log"] for step in plan["steps"] for operation in step.get("operations", [])
+            if operation["type"] in ("patcher", "gui_patcher") and "odypatcher_exempt" not in operation}
 
 
 def parse_7z_listing(text):
@@ -1180,14 +1335,16 @@ def log_verdict(text, operation):
             any(re.search(pattern, text, re.MULTILINE) for pattern in operation["failure_regex"]))
 
 
-def verify_patcher_result(operation, roots, before, deadline, encodings=("utf-8",)):
+def verify_patcher_result(operation, roots, before, deadline, encodings=("utf-8",), check_log=True):
     """Shared proof of a patcher run: fresh log with every marker and no failure
-    match, a changed game manifest and every expected file digest."""
+    match (unless check_log is false: OdyPatcher), a changed game manifest and
+    every expected file digest."""
     success_log = path_token(operation["success_log"], roots, ("game", "extract"))
-    require(success_log.is_file(), "installer success log missing")
-    markers, failed = log_verdict(decode_installer_log(success_log.read_bytes(), encodings), operation)
-    require(markers, "installer success marker missing")
-    require(not failed, "installer failure marker matched")
+    if check_log:
+        require(success_log.is_file(), "installer success log missing")
+        markers, failed = log_verdict(decode_installer_log(success_log.read_bytes(), encodings), operation)
+        require(markers, "installer success marker missing")
+        require(not failed, "installer failure marker matched")
     after = manifest(roots["game"], deadline)
     if success_log.is_relative_to(roots["game"]):
         after.pop(success_log.relative_to(roots["game"]).as_posix(), None)
@@ -1222,9 +1379,11 @@ class PatcherProcess:
     Python error: init_sys_streams ... [WinError 6] Invalid handle"; Wine 9.0 in CI,
     as in Wine bug 51813), while the same program starts with pipes."""
 
-    def __init__(self, argv, cwd, log):
+    def __init__(self, argv, cwd, log, capture=0):
         log.flush()
         self.log = log
+        self.capture = capture  # also keep the first `capture` bytes of output in self.output
+        self.output = bytearray()
         self.process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, start_new_session=True, shell=False)
         self.stopping = threading.Event()
@@ -1245,6 +1404,8 @@ class PatcherProcess:
                     return
                 self.log.write(data)
                 self.log.flush()
+                if len(self.output) < self.capture:
+                    self.output += data[:self.capture - len(self.output)]
             except (OSError, ValueError):
                 return
 
@@ -1283,6 +1444,37 @@ def run_patcher(operation, roots, log, deadline):
     finally:
         stop_patcher(process)
     verify_patcher_result(operation, roots, before, deadline)
+
+
+def ody_errors(output):
+    return [line.strip() for line in bytes(output).decode("utf-8", errors="replace").splitlines()
+            if line.lstrip().startswith("[Error]")]
+
+
+def run_odypatcher(operation, roots, log, deadline, odypatcher):
+    """OdyPatcher natively in place of the original patcher (no Wine, sha256, success log or GUI
+    actions). Its exit code and own [Error] lines decide; the game checks stay the same."""
+    folder, index = ody_inputs(operation, roots)
+    _, cwd, _ = command_arguments(operation, roots)
+    require(cwd.is_dir(), "patcher working directory missing")
+    require(folder.is_dir(), "tslpatchdata folder missing: " + str(folder))
+    argv = [str(odypatcher), "--install", "--game-dir", str(roots["game"]), "--tslpatchdata", str(folder)]
+    if index is not None:
+        argv += ["--namespace-option-index", str(index)]
+    argv.append("--console")
+    note(log, "OdyPatcher replaces the original patcher: " + json.dumps(argv))
+    before = manifest(roots["game"], deadline)
+    check_deadline(deadline)
+    process = PatcherProcess(argv, cwd, log, capture=ODY_OUTPUT_LIMIT)
+    try:
+        code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+    finally:
+        stop_patcher(process)
+    errors = ody_errors(process.output)
+    shown = "".join("; " + line for line in errors[:ODY_ERROR_LINES])
+    require(code == 0, "OdyPatcher exit %d (%s)%s" % (code, ODY_EXIT.get(code, "unknown"), shown))
+    require(not errors, "OdyPatcher exit 0 but reported errors" + shown)
+    verify_patcher_result(operation, roots, before, deadline, check_log=False)
 
 
 GUI_POLL = 0.25
@@ -1569,11 +1761,14 @@ def preserve_installer_log(operation, roots, log):
             pass
 
 
-def execute(operation, roots, log, deadline, rollback_reserve=None):
+def execute(operation, roots, log, deadline, rollback_reserve=None, odypatcher=None):
+    """odypatcher: {"path", "logs"} in --odypatcher mode, else None."""
     validate_operation(operation, roots)
     check_deadline(deadline)
     kind = operation["type"]
-    if kind in ("patcher", "gui_patcher"):
+    if kind in ("patcher", "gui_patcher") and odypatcher is not None and "odypatcher_exempt" not in operation:
+        run_odypatcher(operation, roots, log, deadline, odypatcher["path"])
+    elif kind in ("patcher", "gui_patcher"):
         try:
             (run_patcher if kind == "patcher" else run_gui_patcher)(operation, roots, log, deadline)
         except BaseException:
@@ -1608,6 +1803,9 @@ def execute(operation, roots, log, deadline, rollback_reserve=None):
             elif path.exists():
                 path.unlink()
                 note(log, "deleted " + str(path))
+            elif odypatcher is not None and operation["path"] in odypatcher["logs"]:
+                note(log, "delete target missing (an original patcher's log; OdyPatcher writes none): "
+                     + str(path))
             else:
                 require(operation.get("missing_ok", False), "delete target missing")
                 note(log, "delete target missing (missing_ok): " + str(path))
@@ -1631,6 +1829,41 @@ def interrupted(signum, frame):
     raise KeyboardInterrupt("termination requested")
 
 
+class PairStopped(Exception):
+    """The lockstep pair coordinator answered a barrier with stop."""
+
+
+def pair_barrier():
+    """lockstep.Barrier from the sibling lockstep.py; a no-op without LOCKSTEP_BARRIER_DIR."""
+    spec = importlib.util.spec_from_file_location("lockstep", Path(__file__).resolve().with_name("lockstep.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.Barrier()
+
+
+def short_error(error):
+    return (type(error).__name__ + ": " + str(error))[:300]
+
+
+def run_step(step, checkpoint, plan, plan_hash, args, roots, deadline, rollback_reserve, odypatcher,
+             report_path, report, receipt):
+    """One executed step's operations and its after manifest; the receipt ends complete."""
+    with (checkpoint / "operations.log").open("xb") as log:
+        for operation in step["operations"]:
+            log.write((json.dumps(operation) + "\n").encode())
+            log.flush()
+            verify_archive_inputs(plan, roots, deadline)
+            execute(operation, roots, log, deadline, rollback_reserve, odypatcher)
+    after = manifest(roots["game"], deadline)
+    check_deadline(deadline)
+    require(sha256(args.plan) == plan_hash and sha256(args.guide) == plan["guide_sha256"],
+            "immutable plan or guide changed")
+    write_json(checkpoint / "after.json", after)
+    receipt["status"] = "complete"
+    write_json(report_path, report)
+    return after
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     for name in ("guide", "plan", "game-dir", "archives", "work-dir", "report"):
@@ -1638,15 +1871,28 @@ def main():
     parser.add_argument("--step-timeout", type=float, default=1800)
     parser.add_argument("--keep-snapshots", type=int, default=1,
                         help="successful checkpoints to retain (minimum 1); failed checkpoints always retained")
+    parser.add_argument("--odypatcher", type=Path,
+                        help="run every patcher/gui_patcher op with this native OdyPatcher instead of the original")
+    parser.add_argument("--no-snapshot", action="store_true",
+                        help="inside a lockstep pair only (LOCKSTEP_BARRIER_DIR set): take no pre-step snapshot; "
+                             "a failed step is left as it failed, for the coordinator's diff")
     args = parser.parse_args()
     os.umask(0o077)
     report = {"status": "blocked", "steps": []}
     report_path = None
+    barrier, pending = None, None  # pending: the executed step whose barrier is not reached yet
     try:
         require(os.name == "posix", "POSIX host required; use explicit Wine argv for Windows patchers")
         case_aware_path()
         timeout_value(args.step_timeout)
         require(args.keep_snapshots >= 1, "keep-snapshots must be at least 1")
+        require(not args.no_snapshot or os.environ.get("LOCKSTEP_BARRIER_DIR"),
+                "--no-snapshot is only for a lockstep pair (LOCKSTEP_BARRIER_DIR unset)")
+        odypatcher = None
+        if args.odypatcher is not None:
+            path = args.odypatcher.resolve()
+            require(path.is_file() and os.access(path, os.X_OK), "--odypatcher is not an executable file")
+            odypatcher = {"path": path}
         require(not args.game_dir.is_symlink() and not args.archives.is_symlink()
                 and not args.work_dir.is_symlink(), "symlink root")
         roots = {"game": args.game_dir.resolve(), "archives": args.archives.resolve(),
@@ -1661,11 +1907,19 @@ def main():
         requested_report = args.report.resolve()
         require(not args.report.is_symlink() and not requested_report.exists(), "report already exists")
         require(not any(requested_report.is_relative_to(root) for root in locations[:2]), "report inside input tree")
-        for source in (args.guide.resolve(), args.plan.resolve()):
+        for source in (args.guide.resolve(), args.plan.resolve()) + ((odypatcher["path"],) if odypatcher else ()):
             require(not source.is_relative_to(roots["game"]) and not source.is_relative_to(work), "input in mutable tree")
         plan_hash = sha256(args.plan)
         plan = read_plan(args.plan)
         validate_plan(plan, args.guide, roots, args.step_timeout)
+        if odypatcher:
+            odypatcher["logs"] = ody_logs(plan)
+            report["odypatcher"] = dict(ody_preflight(plan, roots), path=str(odypatcher["path"]),
+                                        sha256=sha256(odypatcher["path"]))
+            for entry in report["odypatcher"]["unresolved"]:
+                print("::warning title=OdyPatcher input missing::%s" % annotation_text(
+                    "%s operation %d: %s" % (entry["step"], entry["operation"], entry["error"])), flush=True)
+        barrier = pair_barrier()
         initial = manifest(roots["game"])
         require(any(value[0] == "file" for value in initial.values()), "game must contain fresh vanilla files")
         work.mkdir(mode=0o700, parents=True)
@@ -1689,7 +1943,10 @@ def main():
                                         "reason": step["omit"]["reason"],
                                         "reviewed_by": step["omit"]["reviewed_by"]})
                 write_json(report_path, report)
+                if not barrier.reach(step["id"], label=step["source_heading"]):
+                    raise PairStopped("pair stopped at barrier after " + step["id"])
                 continue
+            pending = step
             checkpoint = work / ("step-%04d" % index)
             checkpoint.mkdir(mode=0o700)
             snapshot = checkpoint / "before"
@@ -1697,6 +1954,23 @@ def main():
             report["steps"].append(receipt)
             write_json(report_path, report)
             before = manifest(roots["game"])
+            if args.no_snapshot:
+                write_json(checkpoint / "before.json", before)
+                receipt.update(status="pending", snapshot_retained=False, snapshot="skipped (--no-snapshot)")
+                write_json(report_path, report)
+                deadline = time.monotonic() + step.get("timeout_seconds", args.step_timeout)
+                try:
+                    run_step(step, checkpoint, plan, plan_hash, args, roots, deadline, None, odypatcher, report_path,
+                             report, receipt)
+                except BaseException as error:
+                    receipt["status"] = "failed_not_restored"
+                    receipt["error"] = short_error(error)
+                    write_json(report_path, report)
+                    raise
+                pending = None
+                if not barrier.reach(step["id"], label=step["source_heading"]):
+                    raise PairStopped("pair stopped at barrier after " + step["id"])
+                continue
             restore_bytes = tree_capacity(before, roots["game"].parent)
             advancing = args.keep_snapshots == 1 and previous is not None and previous[0].is_dir()
             copied = {name: entry for name, entry in before.items()
@@ -1725,21 +1999,19 @@ def main():
             write_json(report_path, report)
             deadline = time.monotonic() + step.get("timeout_seconds", args.step_timeout)
             try:
-                with (checkpoint / "operations.log").open("xb") as log:
-                    for operation in step["operations"]:
-                        log.write((json.dumps(operation) + "\n").encode())
-                        log.flush()
-                        verify_archive_inputs(plan, roots, deadline)
-                        execute(operation, roots, log, deadline,
-                                (roots["game"].parent, restore_bytes))
-                after = manifest(roots["game"], deadline)
-                check_deadline(deadline)
-                require(sha256(args.plan) == plan_hash and sha256(args.guide) == plan["guide_sha256"],
-                        "immutable plan or guide changed")
-                write_json(checkpoint / "after.json", after)
-                receipt["status"] = "complete"
-                write_json(report_path, report)
-            except BaseException:
+                after = run_step(step, checkpoint, plan, plan_hash, args, roots, deadline,
+                                 (roots["game"].parent, restore_bytes), odypatcher, report_path, report, receipt)
+            except BaseException as error:
+                if not isinstance(error, KeyboardInterrupt):
+                    # Before rollback: the coordinator diffs what the failed step left behind.
+                    pending = None
+                    receipt["error"] = short_error(error)
+                    if not barrier.reach(step["id"], label=step["source_heading"], exit=1, error=receipt["error"]):
+                        # The pair is over and this copy is disposable: exit within the coordinator's grace.
+                        receipt["status"] = "failed_not_restored"
+                        write_json(report_path, report)
+                        raise PairStopped("pair stopped after failed " + step["id"] + ": " + short_error(error)) \
+                            from error
                 receipt["status"] = "restoring"
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
                 signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -1759,6 +2031,9 @@ def main():
             prune_snapshots(successful, args.keep_snapshots, roots["game"], after)
             previous = (snapshot, before, receipt)
             write_json(report_path, report)
+            pending = None
+            if not barrier.reach(step["id"], label=step["source_heading"]):
+                raise PairStopped("pair stopped at barrier after " + step["id"])
         require([item["id"] for item in report["steps"]] == [step["id"] for step in plan["steps"]]
                 and all(item["status"] in ("complete", "omitted") for item in report["steps"]),
                 "every guide step must be complete or omitted")
@@ -1771,6 +2046,15 @@ def main():
         return 0
     except (Exception, KeyboardInterrupt) as error:
         report["status"] = "failed"
+        if pending is not None and not isinstance(error, KeyboardInterrupt):
+            # A step that failed outside its operations (snapshot, admission, --no-snapshot run).
+            try:
+                if not barrier.reach(pending["id"], label=pending["source_heading"], exit=1, error=short_error(error)):
+                    report["status"] = "stopped_by_pair"
+            except Exception as barrier_error:
+                report["barrier_error"] = short_error(barrier_error)
+        if isinstance(error, PairStopped):
+            report["status"] = "stopped_by_pair"
         report["error"] = type(error).__name__ + ": " + str(error)
         if report_path is not None:
             write_json(report_path, report)

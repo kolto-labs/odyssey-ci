@@ -991,9 +991,10 @@ jobs:
             /usr/local/.ghcup /usr/share/swift /usr/local/share/boost /usr/local/share/powershell \
             /usr/lib/jvm /opt/microsoft /opt/az
           python3 tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone"
-          packages=(p7zip-full pkg-config libssl-dev)
+          # python3-tk and python3-venv: the HoloPatcher side's venv (patchers.py); pykotor imports tkinter.
+          packages=(p7zip-full pkg-config libssl-dev python3-tk python3-venv)
           if [[ '${{ matrix.mode }}' == gui ]]; then
-            packages+=(xvfb xauth python3-tk tesseract-ocr tesseract-ocr-eng libxkbcommon-x11-dev
+            packages+=(xvfb xauth tesseract-ocr tesseract-ocr-eng libxkbcommon-x11-dev
               libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libwayland-dev)
           fi
           sudo apt-get update -qq && sudo apt-get install -y -qq "${packages[@]}" >/dev/null
@@ -1115,21 +1116,106 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends wine wine64 wine32:i386 >/dev/null
 
-      - name: Install the full guide
+      # Two installs per lane, in lockstep (docs/ci.md, Paired installs): the same ModSync build installs
+      # full.md twice, once with HoloPatcher and once with OdyPatcher as its external patcher. Each patcher
+      # run waits at a barrier until the other side has run the same patcher; then both game folders are
+      # diffed. Any difference, or a step failing on one side, stops both installs and fails this lane only.
+      - name: Fetch the latest HoloPatcher and OdyPatcher
+        env:
+          # kolto-labs/odypatcher is private; ODYPATCHER_TOKEN needs read access to its releases.
+          ODYPATCHER_TOKEN: ${{ secrets.ODYPATCHER_TOKEN || secrets.MODSYNC_SOURCE_TOKEN }}
+        run: |
+          python3 tools/modsync-ci/patchers.py fetch --dest "$RUNNER_TEMP/patchers" \
+            --out "$RUNNER_TEMP/patchers.json" --python /usr/bin/python3
+          {
+            echo "### Patchers (${{ matrix.game }}, ${{ matrix.implementation }}, ${{ matrix.mode }})"
+            jq -r 'to_entries[] | "- \(.key) \(.value.version)"' "$RUNNER_TEMP/patchers.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Lay out the two installs
+        run: |
+          set -euo pipefail
+          # The larger of the runner's two disks takes the pristine game, both game copies and the archives.
+          # Game copies are full copies: patchers rewrite files in place, which hard links would share.
+          pair="$RUNNER_TEMP/pair"
+          temp_free=$(df --output=avail -B1 "$RUNNER_TEMP" | tail -1)
+          mnt_free=$( (df --output=avail -B1 /mnt 2>/dev/null || echo 0) | tail -1)
+          if (( mnt_free > temp_free )) && sudo mkdir -p /mnt/pair && sudo chown "$(id -u):$(id -g)" /mnt/pair; then
+            pair=/mnt/pair
+          fi
+          mkdir -p "$pair"
+          mv -- "$RUNNER_TEMP/game" "$pair/pristine"
+          mv -- "$RUNNER_TEMP/archives" "$pair/archives"
+          for side in holo ody; do
+            mkdir -p "$pair/$side/tmp"
+            cp -a -- "$pair/pristine" "$pair/$side/game"
+            # Extraction and alias links write into the archives folder, so each side gets its own view.
+            cp -al -- "$pair/archives" "$pair/$side/archives"
+          done
+          python3 tools/modsync-ci/lockstep.py wrapper --real "$(jq -r .holopatcher.path "$RUNNER_TEMP/patchers.json")" \
+            --barrier-dir "$pair/lockstep/holo/barrier" --out "$pair/holo/patcher"
+          python3 tools/modsync-ci/lockstep.py wrapper --real "$(jq -r .odypatcher.path "$RUNNER_TEMP/patchers.json")" \
+            --barrier-dir "$pair/lockstep/ody/barrier" --out "$pair/ody/patcher"
+          echo "PAIR=$pair" >> "$GITHUB_ENV"
+          df -h "$RUNNER_TEMP" /mnt 2>/dev/null || df -h "$RUNNER_TEMP"
+
+      - name: Build ModSync (${{ matrix.implementation }}) once for both installs
+        run: |
+          python tools/modsync-ci/ports.py --build-only \
+            --implementation '${{ matrix.implementation }}' --mode '${{ matrix.mode }}' \
+            --source .modsync-source --work-dir "$PAIR/build" --report "$PAIR/build-report.json"
+
+      - name: Install the full guide twice in lockstep (HoloPatcher and OdyPatcher)
         env:
           REVIEW: ci/${{ matrix.game }}-${{ matrix.implementation }}-review.json
+          IMPLEMENTATION: ${{ matrix.implementation }}
+          MODE: ${{ matrix.mode }}
           WINEDEBUG: '-all'
-          WINEDLLOVERRIDES: 'mscoree,mshtml='
+          WINEDLLOVERRIDES: 'mscoree,mshtml=;winemenubuilder.exe=d'
         run: |
-          review=(--restore-report "$RUNNER_TEMP/restore-report.json")
-          if [[ -f "$REVIEW" ]]; then review+=(--review-manifest "$REVIEW"); fi
-          df -h "$RUNNER_TEMP" /
-          python tools/modsync-ci/ports.py \
-            --implementation '${{ matrix.implementation }}' --mode '${{ matrix.mode }}' \
-            --source .modsync-source --guide "content/$GAME/full.md" \
-            --game-dir "$RUNNER_TEMP/game" --archives "$RUNNER_TEMP/archives" \
-            --archive-map "$RUNNER_TEMP/archive-map.json" \
-            --work-dir "$RUNNER_TEMP/work" --report "$RUNNER_TEMP/report.json" "${review[@]}"
+          set -euo pipefail
+          python3 - <<'EOF'
+          import json, os
+          env, pair, temp = os.environ, os.environ["PAIR"], os.environ["RUNNER_TEMP"]
+          commands = {}
+          for number, side in enumerate(("holo", "ody"), start=1):
+              root = "%s/%s" % (pair, side)
+              argv = ["python", "tools/modsync-ci/ports.py",
+                      "--implementation", env["IMPLEMENTATION"], "--mode", env["MODE"],
+                      "--source", ".modsync-source", "--prebuilt", pair + "/build",
+                      "--guide", "content/%s/full.md" % env["GAME"],
+                      "--game-dir", root + "/game", "--archives", root + "/archives",
+                      "--archive-map", temp + "/archive-map.json", "--baseline-dir", pair + "/pristine",
+                      "--temp-dir", root + "/tmp", "--work-dir", root + "/work",
+                      "--report", root + "/report.json", "--patcher-path", root + "/patcher",
+                      "--restore-report", temp + "/restore-report.json",
+                      # Barrier waits count against each ModSync command; stop before the 360-minute job limit.
+                      "--command-timeout", "18000"]
+              if os.path.isfile(env["REVIEW"]):
+                  argv += ["--review-manifest", env["REVIEW"]]
+              if env["IMPLEMENTATION"] == "rust" and env["MODE"] == "gui":
+                  argv += ["--display-base", str(100 * number)]
+              if env["IMPLEMENTATION"] == "typescript" and env["MODE"] == "cli":
+                  argv += ["--no-checkpoints"]
+              commands[side] = {"argv": argv, "env": {"WINEPREFIX": root + "/wine"}}
+          with open(pair + "/pair.json", "w", encoding="utf-8") as stream:
+              json.dump({"commands": commands}, stream, indent=2)
+          EOF
+          # .modsync is ModSync.ts's own checkpoint store inside the game folder, not installed content.
+          # The first barrier also waits out ModSync's convert, validate and alias stages.
+          status=0
+          python tools/modsync-ci/lockstep.py pair --commands "$PAIR/pair.json" \
+            --tree "holo=$PAIR/holo/game" --tree "ody=$PAIR/ody/game" --ignore .modsync \
+            --work-dir "$PAIR/lockstep" --report "$RUNNER_TEMP/lockstep-report.json" \
+            --evidence-dir "$RUNNER_TEMP/lockstep-evidence" --summary "$GITHUB_STEP_SUMMARY" \
+            --step-timeout 3600 --first-step-timeout 10800 || status=$?
+          # Each side's own output (progress, ::error annotations) went to its install.log.
+          for side in holo ody; do
+            echo "::group::$side install output"
+            cat -- "$PAIR/lockstep/$side/install.log" 2>/dev/null || true
+            echo "::endgroup::"
+          done
+          exit "$status"
 
       - name: Seal lane diagnostics
         if: always()
@@ -1140,11 +1226,26 @@ jobs:
             echo "::warning::DIAGNOSTICS_ENCRYPTION_KEY is not set; the lane report and convert log are not uploaded."
             exit 0
           fi
-          mkdir -p "$RUNNER_TEMP/diagnostics-plain" "$RUNNER_TEMP/diagnostics"
-          if [[ -f "$RUNNER_TEMP/report.json" ]]; then cp -- "$RUNNER_TEMP/report.json" "$RUNNER_TEMP/diagnostics-plain/"; fi
-          for log in "$RUNNER_TEMP"/work/ports-*/convert.log; do
-            if [[ -f "$log" ]]; then cp -- "$log" "$RUNNER_TEMP/diagnostics-plain/"; fi
+          plain="$RUNNER_TEMP/diagnostics-plain"
+          mkdir -p "$plain" "$RUNNER_TEMP/diagnostics"
+          for file in patchers.json lockstep-report.json; do
+            if [[ -f "$RUNNER_TEMP/$file" ]]; then cp -- "$RUNNER_TEMP/$file" "$plain/"; fi
           done
+          # The lockstep evidence (the differing files of the first discrepancy) is size-capped by lockstep.py.
+          if [[ -d "$RUNNER_TEMP/lockstep-evidence" ]]; then cp -a -- "$RUNNER_TEMP/lockstep-evidence" "$plain/"; fi
+          if [[ -n "${PAIR:-}" ]]; then
+            if [[ -f "$PAIR/build-report.json" ]]; then cp -- "$PAIR/build-report.json" "$plain/"; fi
+            for side in holo ody; do
+              mkdir -p "$plain/$side"
+              if [[ -f "$PAIR/$side/report.json" ]]; then cp -- "$PAIR/$side/report.json" "$plain/$side/"; fi
+              if [[ -f "$PAIR/lockstep/$side/install.log" ]]; then
+                tail -c 16M -- "$PAIR/lockstep/$side/install.log" > "$plain/$side/install.log"
+              fi
+              for log in "$PAIR/$side"/work/ports-*/convert.log; do
+                if [[ -f "$log" ]]; then cp -- "$log" "$plain/$side/"; fi
+              done
+            done
+          fi
           CACHE_ENCRYPTION_KEY="$DIAGNOSTICS_ENCRYPTION_KEY" python tools/modsync-ci/seal.py seal \
             --source "$RUNNER_TEMP/diagnostics-plain" --destination "$RUNNER_TEMP/diagnostics/lane-diagnostics.seal"
       - name: Upload sealed lane diagnostics
@@ -1310,21 +1411,100 @@ jobs:
       - name: Fail without a reviewed plan
         if: steps.plan.outputs.present == 'false'
         run: echo "::error title=manual lane installed nothing::$PLAN is missing. The manual lane needs a reviewed, Wine-executed plan; a draft is attached as manual-drafts-$GAME and the archive evidence as manual-evidence-$GAME."; exit 1
-      - name: Install the full guide manually with the original patchers
+      # Two installs in lockstep (docs/ci.md, Paired installs): orig runs each mod's own patcher under Wine
+      # as the plan says, ody runs the latest OdyPatcher in its place. Both wait after every plan step and
+      # the two game folders are diffed; a difference or a failed step stops both and fails this lane only.
+      - name: Fetch the latest OdyPatcher
         if: steps.plan.outputs.present == 'true'
+        env:
+          ODYPATCHER_TOKEN: ${{ secrets.ODYPATCHER_TOKEN || secrets.MODSYNC_SOURCE_TOKEN }}
         run: |
+          python3 tools/modsync-ci/patchers.py fetch --odypatcher-only --dest "$RUNNER_TEMP/patchers" \
+            --out "$RUNNER_TEMP/patchers.json"
+          jq -r '"### OdyPatcher (manual \(env.GAME)): \(.odypatcher.version)"' "$RUNNER_TEMP/patchers.json" \
+            >> "$GITHUB_STEP_SUMMARY"
+      - name: Install the full guide manually twice in lockstep (original patchers and OdyPatcher)
+        if: steps.plan.outputs.present == 'true'
+        env:
+          WINEDLLOVERRIDES: 'mscoree,mshtml=;winemenubuilder.exe=d'
+        run: |
+          set -euo pipefail
           # manual.py resolves game paths case-insensitively with PyKotor (PYKOTOR_REQUIREMENT).
           python -m pip install --quiet "$(python -c 'import sys; sys.path.insert(0, "tools/modsync-ci"); import manual; print(manual.PYKOTOR_REQUIREMENT)')"
-          xvfb-run -a -s "-screen 0 1280x1024x24" python tools/modsync-ci/manual.py --plan "$PLAN" \
-            --guide "content/$GAME/full.md" --game-dir "$RUNNER_TEMP/game" \
-            --archives "$RUNNER_TEMP/archives" --work-dir "$RUNNER_TEMP/work" \
-            --report "$RUNNER_TEMP/report.json"
+          # Two full game copies (patchers write in place, so no hard links) on the larger disk.
+          pair="$RUNNER_TEMP/pair"
+          temp_free=$(df --output=avail -B1 "$RUNNER_TEMP" | tail -1)
+          mnt_free=$( (df --output=avail -B1 /mnt 2>/dev/null || echo 0) | tail -1)
+          if (( mnt_free > temp_free )) && sudo mkdir -p /mnt/pair && sudo chown "$(id -u):$(id -g)" /mnt/pair; then
+            pair=/mnt/pair
+          fi
+          mkdir -p "$pair/orig" "$pair/ody"
+          cp -a -- "$RUNNER_TEMP/game" "$pair/ody/game"
+          mv -- "$RUNNER_TEMP/game" "$pair/orig/game"
+          echo "PAIR=$pair" >> "$GITHUB_ENV"
+          python3 - "$pair" <<'EOF'
+          import json, os, sys
+          pair, temp, env = sys.argv[1], os.environ["RUNNER_TEMP"], os.environ
+          odypatcher = json.load(open(temp + "/patchers.json"))["odypatcher"]["path"]
+          commands = {}
+          # manual.py only reads the archives, so both sides share them.
+          for display, side in ((91, "orig"), (92, "ody")):
+              root = "%s/%s" % (pair, side)
+              argv = ["xvfb-run", "-n", str(display), "-s", "-screen 0 1280x1024x24",
+                      "python", "tools/modsync-ci/manual.py", "--plan", env["PLAN"],
+                      "--guide", "content/%s/full.md" % env["GAME"], "--game-dir", root + "/game",
+                      "--archives", temp + "/archives", "--work-dir", root + "/work",
+                      "--report", root + "/report.json"]
+              if side == "ody":
+                  # The lockstep diff after each step replaces the per-step game snapshot.
+                  argv += ["--odypatcher", odypatcher, "--no-snapshot"]
+              commands[side] = {"argv": argv, "env": {"WINEPREFIX": root + "/wine"}}
+          with open(pair + "/pair.json", "w", encoding="utf-8") as stream:
+              json.dump({"commands": commands}, stream, indent=2)
+          EOF
+          df -h "$pair"
+          # manual.py gives each plan step its own deadline (timeout_seconds, at most 5400 today); the pair's
+          # per-step limit sits above the largest, so only a hung side trips it.
+          status=0
+          python tools/modsync-ci/lockstep.py pair --commands "$pair/pair.json" \
+            --tree "orig=$pair/orig/game" --tree "ody=$pair/ody/game" \
+            --work-dir "$pair/lockstep" --report "$RUNNER_TEMP/lockstep-report.json" \
+            --evidence-dir "$RUNNER_TEMP/lockstep-evidence" --summary "$GITHUB_STEP_SUMMARY" \
+            --step-timeout 7200 || status=$?
+          for side in orig ody; do
+            echo "::group::$side install output"
+            cat -- "$pair/lockstep/$side/install.log" 2>/dev/null || true
+            echo "::endgroup::"
+          done
+          exit "$status"
+      - name: Gather manual lane reports
+        if: always() && steps.plan.outputs.present == 'true'
+        env:
+          DIAGNOSTICS_ENCRYPTION_KEY: ${{ secrets.DIAGNOSTICS_ENCRYPTION_KEY }}
+        run: |
+          out="$RUNNER_TEMP/manual-reports"
+          mkdir -p "$out"
+          for file in patchers.json lockstep-report.json; do
+            if [[ -f "$RUNNER_TEMP/$file" ]]; then cp -- "$RUNNER_TEMP/$file" "$out/"; fi
+          done
+          # The lockstep evidence holds the diverging game files themselves, so it is only uploaded sealed.
+          if [[ -d "$RUNNER_TEMP/lockstep-evidence" ]]; then
+            if [[ -n "$DIAGNOSTICS_ENCRYPTION_KEY" ]]; then
+              CACHE_ENCRYPTION_KEY="$DIAGNOSTICS_ENCRYPTION_KEY" python tools/modsync-ci/seal.py seal \
+                --source "$RUNNER_TEMP/lockstep-evidence" --destination "$out/lockstep-evidence.seal"
+            else
+              echo "::warning::DIAGNOSTICS_ENCRYPTION_KEY is not set; the lockstep evidence is not uploaded."
+            fi
+          fi
+          for side in orig ody; do
+            if [[ -n "${PAIR:-}" && -f "$PAIR/$side/report.json" ]]; then cp -- "$PAIR/$side/report.json" "$out/$side-report.json"; fi
+          done
       - name: Upload manual lane report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: manual-report-${{ matrix.game }}
-          path: ${{ runner.temp }}/report.json
+          path: ${{ runner.temp }}/manual-reports
           retention-days: 14
           if-no-files-found: ignore
       - name: Collect manual lane step diagnostics
@@ -1337,13 +1517,19 @@ jobs:
           # the manifests or work/extract. manual.py runs as this user, so its 0700/0600 files are readable.
           out="$RUNNER_TEMP/manual-diagnostics"
           mkdir -p "$out"
-          [ -d "$RUNNER_TEMP/work" ] || exit 0
-          for step in "$RUNNER_TEMP"/work/step-*/; do
-            [ -d "$step" ] || continue
-            name=$(basename "$step")
-            find "$step" -mindepth 1 -maxdepth 1 -type f -size -16M \
-              ! -name before.json ! -name after.json \
-              -exec install -D -m 0644 -t "$out/$name" {} +
+          [ -n "${PAIR:-}" ] || exit 0
+          for side in orig ody; do
+            if [[ -f "$PAIR/lockstep/$side/install.log" ]]; then
+              mkdir -p "$out/$side"
+              tail -c 16M -- "$PAIR/lockstep/$side/install.log" > "$out/$side/install.log"
+            fi
+            for step in "$PAIR/$side"/work/step-*/; do
+              [ -d "$step" ] || continue
+              name=$(basename "$step")
+              find "$step" -mindepth 1 -maxdepth 1 -type f -size -16M \
+                ! -name before.json ! -name after.json \
+                -exec install -D -m 0644 -t "$out/$side/$name" {} +
+            done
           done
           du -sh "$out" || true
       - name: Upload manual lane step diagnostics

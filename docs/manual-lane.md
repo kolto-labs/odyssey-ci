@@ -83,7 +83,10 @@ approves operations itself. The full contract is in the docstring of
 
 Use the mod's own original patcher. Do not substitute ModSync's `vendor/bin`
 patchers, OdyPatcher or another HoloPatcher build. A HoloPatcher build shipped by
-a mod has its own command line, so it runs as a `patcher` with that CLI.
+a mod has its own command line, so it runs as a `patcher` with that CLI. The one
+exception is the OdyPatcher side of a lockstep pair (`--odypatcher`, see
+[OdyPatcher in a lockstep pair](#odypatcher-in-a-lockstep-pair)); that run is a
+comparison, never manual-lane evidence.
 
 ### GUI-only patchers (`gui_patcher`)
 
@@ -273,8 +276,98 @@ reviewed.
   and patchers build on earlier rows in shared `.2da` and `.tlk` files.
 - Work, logs, snapshots and reports are private (0700/0600).
 - Exit 0 means every executed step completed and verified (report status `complete`,
-  or `partial` when steps were reviewed and omitted); 1 means failed or blocked.
-  There is no resume.
+  or `partial` when steps were reviewed and omitted); 1 means failed, blocked or
+  `stopped_by_pair`. There is no resume.
+
+## OdyPatcher in a lockstep pair
+
+`tools/modsync-ci/lockstep.py pair` runs the same plan twice at once, once with the
+original patchers and once with `manual.py --odypatcher PATH`, and diffs the two
+game folders after every step.
+
+With `--odypatcher`, every `patcher` and `gui_patcher` operation runs
+`PATH --install --game-dir <game> --tslpatchdata <dir> [--namespace-option-index N] --console`
+natively, without Wine. Every other operation runs exactly as on the original side.
+The game checks stay: `expected_files`, `expected_changes`, the changed manifest and
+the receipts. The original patcher's `sha256`, success log, markers, failure regex,
+`wine_registry` and actions are not used. OdyPatcher's exit code decides instead: 0
+passes, anything else fails (3, 4, 5 and 6 are refusals, 7 means it stopped partway,
+8 means it finished with errors), and an `[Error]` line in its output fails the
+operation too. OdyPatcher writes none of the original patchers' logs, so a plan
+`delete` of such a log is treated as `missing_ok` on this side.
+
+Where `<dir>` and `N` come from:
+
+- `patcher` (HoloPatcher CLI): `--tslpatchdata` and `--namespace-option-index` from
+  the reviewed argv. No index flag means OdyPatcher gets none either.
+- `gui_patcher` (TSLPatcher): `<dir>` is the patcher's own folder, since TSLPatcher
+  reads the `tslpatchdata` next to it. TSLPatcher's "Select installation type" dialog
+  lists `namespaces.ini` in file order with the first entry preselected, and
+  OdyPatcher numbers them in the same order, so `N` is the number of `Down` keys the
+  reviewed actions send to that dialog. If no action touches the dialog, there is no
+  index.
+
+Optional reviewed plan fields on both operation types override or confirm this:
+`namespace_index` (a number, or `null` for none), `namespace_index_evidence` (why
+that number is right), `tslpatchdata` (a `{extract}/` or `{archives}/` path) and
+`odypatcher_exempt` (a reason to run the original operation unchanged on both sides).
+They are checked in every mode. A `namespace_index` must match the argv or the
+actions. If the actions don't settle it (any key other than `Down`, or typed text,
+sent to the dialog), it needs `namespace_index_evidence`. The committed plans set
+`namespace_index` on every `gui_patcher` (K1: 28 with a choice, 41 without; K2: 20
+and 24) and exempt K2 `step-002`, the TSLRCM Inno Setup installer, which has no
+`tslpatchdata`. The `namespaces.ini` files themselves are not in the CI evidence yet,
+so each index rests on the reviewed key presses.
+
+Before anything is installed, the report's `odypatcher` entry records the
+OdyPatcher path and SHA-256, the operation counts, the exemptions and every
+operation whose inputs are missing (each one also gets a warning). The run still
+starts, so the pair compares every step before the first such operation. That
+operation then fails with "no reviewed namespace_index" or "no reviewed
+tslpatchdata".
+
+After every step, run or omitted, `manual.py` reaches the pair barrier
+(`lockstep.Barrier().reach(step id, label=source heading, exit, error)`), so both
+sides reach the same step ids in the same order. Without `LOCKSTEP_BARRIER_DIR` this
+does nothing. A failed step reaches it with `exit: 1` before its rollback, so the
+coordinator diffs what the failure left behind. If the coordinator answers stop, the
+report status is `stopped_by_pair`, a failed step stays unrestored
+(`failed_not_restored`) and the exit code is 1. The coordinator kills a side 60
+seconds after a stop, so there is no time to restore a 4 GB tree, and the copy is
+thrown away anyway.
+
+`--no-snapshot` (only with `LOCKSTEP_BARRIER_DIR` set) skips the pre-step snapshot
+and its rollback reserve. The `before.json` and `after.json` manifests are still
+written. In a pair the snapshot is never restored: any failure stops both sides, the
+failed tree is what the coordinator compares, and nothing resumes.
+
+Two sides on one runner each need their own `--game-dir`, `--work-dir`, `--report`,
+`WINEPREFIX` and `xvfb-run`. `manual.py` keeps all temporary files under the game's
+parent, the work directory or the report's folder, with unique names. Wine state
+(registry, `wineserver -k`) belongs to one `WINEPREFIX`, and window actions and
+screenshots go to one `DISPLAY`. Things to watch:
+
+- Two `xvfb-run -a` started at the same moment can pick the same display number.
+  Start them a second apart or give each its own `-n`.
+- Wine's menu builder writes into the shared `~/.local/share/applications`. It is
+  harmless, and `winemenubuilder.exe=d` in `WINEDLLOVERRIDES` turns it off.
+- Disk admission checks free space per side, so the two sides don't see each
+  other's reservations.
+- Patchers run in their own sessions. If the coordinator kills `manual.py` in the
+  middle of a step (its own step timeout, not a barrier stop), the patcher and Wine
+  keep running. Keep `manual.py --step-timeout` below the pair's `--step-timeout` so
+  `manual.py` times out first and stops its own patcher.
+
+`--archives` can be shared. `manual.py` never writes there: it extracts into
+`{extract}`, and every read input is re-hashed before each operation. Don't
+`chmod` it read-only, because copies keep file modes and would carry read-only
+files into the game. A read-only bind mount keeps the modes, so it works.
+
+Disk per side, with `G` the game tree and `X` the largest step's extracted files:
+the game tree, the snapshot (about `G` once it has been advanced) and `X`, so about
+`2G + X`. Admission also needs a further `G` free for a restore. Two sides need
+about `4G + 2X`, plus the shared archives. With `--no-snapshot` a side needs about
+`G + X` and no restore reserve.
 
 ## Patcher probe
 

@@ -127,6 +127,11 @@ def finish_stage(report, stage, started, outcome):
     return seconds
 
 
+# Seconds one ModSync command may run; --command-timeout raises it for paired installs, where each side
+# also waits at every patcher barrier for the other side.
+COMMAND_TIMEOUT = 7200
+
+
 def run(command, source, private, stage, report, env):
     report["stage"] = stage
     log = private / (stage + ".log")
@@ -138,7 +143,7 @@ def run(command, source, private, stage, report, env):
             stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
         )
         try:
-            code = process.wait(timeout=7200)
+            code = process.wait(timeout=COMMAND_TIMEOUT)
         except (subprocess.TimeoutExpired, KeyboardInterrupt):
             os.killpg(process.pid, signal.SIGTERM)
             try:
@@ -1822,12 +1827,23 @@ def game_file_state(root):
     return state
 
 
-def take_baseline(game, private, report):
+def take_baseline(game, private, report, source=None):
     """Copy the game directory to the lane's private directory before the first install.
 
     Returns (baseline directory, manifest) or None when the copy failed or does not match the
     game; the outcome is recorded under report["quarantine"]["baseline"] either way.
+    `source` (--baseline-dir) is a pristine copy the caller owns: it is used in place of a copy
+    once its file list and sizes match the game, and it is only ever read.
     """
+    if source is not None:
+        manifest = tree_manifest(source)
+        if manifest != tree_manifest(game):
+            raise Blocked("baseline_dir_differs_from_game")
+        report["quarantine"]["baseline"] = {
+            "status": "caller_copy", "path": str(source),
+            "files": sum(kind == "file" for kind, _ in manifest.values()),
+            "bytes": sum(size for kind, size in manifest.values() if kind == "file")}
+        return source, manifest
     baseline = private / "game-baseline"
     try:
         copy_tree(game, baseline)
@@ -1842,6 +1858,12 @@ def take_baseline(game, private, report):
         "status": "copied", "files": sum(kind == "file" for kind, _ in manifest.values()),
         "bytes": sum(size for kind, size in manifest.values() if kind == "file")}
     return baseline, manifest
+
+
+def discard_baseline(baseline, private):
+    """Delete the lane's own baseline copy; a caller's --baseline-dir is left alone."""
+    if baseline is not None and baseline[0].is_relative_to(private):
+        shutil.rmtree(baseline[0], ignore_errors=True)
 
 
 def restore_game(game, baseline, manifest):
@@ -2018,7 +2040,8 @@ def recover_typescript_state(command, game, text, source, private, stage, report
 def install_with_quarantine(command, directories, deselect, converted, game, source, private, report,
                             env, max_iterations=QUARANTINE_MAX_ITERATIONS,
                             max_fraction=QUARANTINE_MAX_FRACTION, implementation="rust",
-                            arguments=None, selectable=None, extra=(), before_phase=None):
+                            arguments=None, selectable=None, extra=(), before_phase=None,
+                            baseline_source=None):
     """Run `install`; when one component's step stops it, restore the game, omit that component and retry.
 
     TypeScript (`implementation="typescript"`): each attempt runs `install --phase base` then
@@ -2059,7 +2082,7 @@ def install_with_quarantine(command, directories, deselect, converted, game, sou
     started = time.monotonic()
     if policy["max_iterations"] > 0:
         progress("baseline_copy: started")
-        baseline = take_baseline(game, private, report)
+        baseline = take_baseline(game, private, report, baseline_source)
         finish_stage(report, "baseline_copy", started, (report["quarantine"].get("baseline") or {}).get("status"))
     else:
         baseline = None
@@ -2154,8 +2177,7 @@ def install_with_quarantine(command, directories, deselect, converted, game, sou
             attempt += 1
             continue
         report.pop("failure", None)
-        if baseline is not None:
-            shutil.rmtree(baseline[0], ignore_errors=True)
+        discard_baseline(baseline, private)
         after = game_file_state(game)
         changed = sum(after.get(path) != state for path, state in before.items()) + len(
             after.keys() - before.keys())
@@ -2304,7 +2326,8 @@ def rust_gui_failure_fields(failure, components):
 
 def install_rust_gui_with_quarantine(command, source, private, game, archives, converted, policy_guids,
                                      deselect, report, env, max_iterations=QUARANTINE_MAX_ITERATIONS,
-                                     max_fraction=QUARANTINE_MAX_FRACTION):
+                                     max_fraction=QUARANTINE_MAX_FRACTION, baseline_source=None,
+                                     driver_options=()):
     """Run the Rust GUI driver with the shared bounded install quarantine policy."""
     components = converted_components(converted)
     policy = report.get("quarantine") or start_quarantine(
@@ -2315,7 +2338,7 @@ def install_rust_gui_with_quarantine(command, source, private, game, archives, c
     if policy["max_iterations"] > 0:
         started = time.monotonic()
         progress("baseline_copy: started")
-        baseline = take_baseline(game, private, report)
+        baseline = take_baseline(game, private, report, baseline_source)
         finish_stage(report, "baseline_copy", started, (policy.get("baseline") or {}).get("status"))
     attempt = 0
     while True:
@@ -2329,7 +2352,7 @@ def install_rust_gui_with_quarantine(command, source, private, game, archives, c
                  "--binary", command[0], "--input", str(converted),
                  "--game-dir", str(game), "--archives", str(archives),
                  "--work-dir", str(gui_work), "--report", str(driver_report),
-                 "--timeout", "7000", "--exclude-widescreen"]
+                 "--timeout", "7000", "--exclude-widescreen", *driver_options]
                 + [flag for guid_ in sorted(skipped) for flag in ("--deselect", guid_)],
                 source, private, stage, report, env)
         except Blocked as failure:
@@ -2389,8 +2412,7 @@ def install_rust_gui_with_quarantine(command, source, private, game, archives, c
             attempt += 1
             continue
         report.pop("failure", None)
-        if baseline is not None:
-            shutil.rmtree(baseline[0], ignore_errors=True)
+        discard_baseline(baseline, private)
         return driver_report
 
 
@@ -2444,7 +2466,7 @@ def install_gui_with_quarantine(command, source, private, game, archives, conver
                                 policy_guids, deselect, selectable, report, env,
                                 max_iterations=QUARANTINE_MAX_ITERATIONS,
                                 max_fraction=QUARANTINE_MAX_FRACTION, reviewed_inputs_unchanged=None,
-                                choices=None):
+                                choices=None, baseline_source=None, driver_options=()):
     """Run the TypeScript GUI driver; when one component's install step stops it, restore, omit it and retry.
 
     The same loop as `install_with_quarantine`, with the GUI driver as the install: stages `gui`,
@@ -2478,7 +2500,7 @@ def install_gui_with_quarantine(command, source, private, game, archives, conver
     if policy["max_iterations"] > 0:
         started = time.monotonic()
         progress("baseline_copy: started")
-        baseline = take_baseline(game, private, report)
+        baseline = take_baseline(game, private, report, baseline_source)
         finish_stage(report, "baseline_copy", started, (policy.get("baseline") or {}).get("status"))
     attempt = 0
     while True:
@@ -2497,7 +2519,7 @@ def install_gui_with_quarantine(command, source, private, game, archives, conver
                  "--source", str(source), "--input", str(selected_input),
                  "--game-dir", str(game), "--archives", str(archives),
                  "--work-dir", str(gui_work), "--report", str(driver_report),
-                 "--timeout", "7000", *(choices or [])],
+                 "--timeout", "7000", *(choices or []), *driver_options],
                 source, private, stage, report, env)
         except Blocked as failure:
             if str(failure) != stage + "_failed":
@@ -2582,8 +2604,7 @@ def install_gui_with_quarantine(command, source, private, game, archives, conver
         result = verify_typescript_gui_result(
             driver_report, selected_input, gui_work, game, reviewed_inputs_unchanged)
         report.pop("failure", None)
-        if baseline is not None:
-            shutil.rmtree(baseline[0], ignore_errors=True)
+        discard_baseline(baseline, private)
         return result
 
 
@@ -3252,6 +3273,82 @@ def review_manifest(path, guide, converted):
     return answers
 
 
+BUILD_RECORD = "build.json"
+# What --patcher-path selects in each implementation: the HoloPatcher engine, whose unattended CLI
+# (--install --game-dir D --tslpatchdata S [--namespace-option-index N] [--console]) the file takes.
+PATCHER_ENGINES = {"rust": "holo-patcher", "typescript": "HoloPatcher"}
+TYPESCRIPT_SETTINGS_ENV = "MODSYNC_SETTINGS_PATH"
+TYPESCRIPT_NO_CHECKPOINTS_FLAG = "--no-checkpoints"
+
+
+def overlaps(path, others):
+    return any(path == other or path.is_relative_to(other) or other.is_relative_to(path)
+               for other in others)
+
+
+def build_modsync(implementation, source, private, report, env):
+    """Build ModSync from `source`; returns the command that runs its CLI."""
+    if implementation == "rust":
+        if not (source / "Cargo.toml").is_file():
+            raise Blocked("rust_source_manifest_missing")
+        run(["cargo", "build", "--locked", "--bin", "modsync"],
+            source, private, "build", report, env)
+        return [str(Path(env["CARGO_TARGET_DIR"]) / "debug/modsync")]
+    if not (source / "packages/cli/src/main.ts").is_file():
+        raise Blocked("typescript_source_entrypoint_missing")
+    run(["pnpm", "build"], source, private, "build", report, env)
+    return ["node", str(source / "packages/cli/dist/main.js")]
+
+
+def execute_build(args, report):
+    """--build-only: build once into --work-dir and record it in <work-dir>/build.json for --prebuilt.
+
+    The Rust binary goes to <work-dir>/target/debug/modsync; TypeScript builds in --source as always.
+    """
+    source = args.source.resolve(strict=True)
+    work = args.work_dir.resolve()
+    if not source.is_dir():
+        raise Blocked("required_directory_missing")
+    if overlaps(work, (source,)):
+        raise Blocked("work_directory_overlaps_inputs")
+    work.mkdir(parents=True, exist_ok=True)
+    private = Path(tempfile.mkdtemp(prefix="ports-build-", dir=work))
+    private.chmod(0o700)
+    env = os.environ.copy()
+    env["CARGO_TARGET_DIR"] = str(work / "target")
+    command = build_modsync(args.implementation, source, private, report, env)
+    entry = Path(command[-1])
+    if not entry.is_file():
+        raise Blocked("build_output_missing")
+    record = {"implementation": args.implementation, "source": str(source), "command": command,
+              "sha256": digest(entry)}
+    temporary = work / (BUILD_RECORD + ".tmp")
+    temporary.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(work / BUILD_RECORD)
+    report["build"] = record
+    report["status"] = "built"
+    report["reason"] = "build_succeeded"
+
+
+def prebuilt_command(directory, implementation, source, report):
+    """The command a --build-only run recorded in `directory`, checked against this run."""
+    try:
+        record = json.loads((directory.resolve(strict=True) / BUILD_RECORD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise Blocked("prebuilt_record_missing") from None
+    command = record.get("command") if isinstance(record, dict) else None
+    if (not isinstance(command, list) or not command
+            or record.get("implementation") != implementation or record.get("source") != str(source)):
+        raise Blocked("prebuilt_record_mismatch")
+    entry = Path(command[-1])
+    if not entry.is_file() or digest(entry) != record.get("sha256"):
+        raise Blocked("prebuilt_output_changed")
+    if implementation == "rust" and not os.access(entry, os.X_OK):
+        raise Blocked("prebuilt_output_changed")
+    report["build"] = {"prebuilt": str(directory.resolve()), "sha256": record["sha256"]}
+    return command
+
+
 def execute(args, report):
     source = args.source.resolve(strict=True)
     guide = args.guide.resolve(strict=True)
@@ -3263,25 +3360,56 @@ def execute(args, report):
     if not guide.is_file() or guide.name != "full.md":
         raise Blocked("full_markdown_guide_required")
     protected = (source, game, archives, guide.parent)
-    if any(work == path or work.is_relative_to(path) or path.is_relative_to(work)
-           for path in protected):
+    if overlaps(work, protected):
         raise Blocked("work_directory_overlaps_inputs")
-    if any(game == path or game.is_relative_to(path) or path.is_relative_to(game)
-           for path in (source, archives, guide.parent)):
+    if overlaps(game, (source, archives, guide.parent)):
         raise Blocked("game_directory_overlaps_inputs")
+    baseline_source = None
+    if getattr(args, "baseline_dir", None) is not None:
+        baseline_source = args.baseline_dir.resolve(strict=True)
+        if not baseline_source.is_dir() or overlaps(baseline_source, protected + (work,)):
+            raise Blocked("baseline_directory_overlaps_inputs")
+    patcher = None
+    if getattr(args, "patcher_path", None) is not None:
+        patcher = args.patcher_path.resolve(strict=True)
+        if not patcher.is_file() or not os.access(patcher, os.X_OK):
+            raise Blocked("patcher_path_not_executable")
+        if any(patcher.is_relative_to(path) for path in (game, archives)):
+            raise Blocked("patcher_path_inside_install_roots")
     work.mkdir(parents=True, exist_ok=True)
     private = Path(tempfile.mkdtemp(prefix="ports-", dir=work))
     private.chmod(0o700)
     report["guide_sha256"] = digest(guide)
     env = os.environ.copy()
     env["CARGO_TARGET_DIR"] = str(private / "target")
+    if getattr(args, "temp_dir", None) is not None:
+        # ModSync's extraction and patcher staging, xvfb-run's auth file and tsx's cache all follow TMPDIR.
+        temp = args.temp_dir.resolve()
+        if overlaps(temp, (source, game, archives, guide.parent)):
+            raise Blocked("temp_directory_overlaps_inputs")
+        temp.mkdir(parents=True, exist_ok=True)
+        for name in ("TMPDIR", "TMP", "TEMP"):
+            env[name] = str(temp)
+        report["temp_dir"] = str(temp)
+    driver_options = []
+    if patcher is not None:
+        report["patcher"] = {"engine": PATCHER_ENGINES[args.implementation], "path": str(patcher)}
+        driver_options += ["--patcher-path", str(patcher)]
+        if args.implementation == "typescript":
+            # One settings file for every CLI call (import, validate, install, checkpoints restore).
+            settings = private / "modsync-settings.json"
+            settings.write_text(json.dumps({"patcherEngine": PATCHER_ENGINES["typescript"],
+                                            "holoPatcherPath": str(patcher)}, indent=2) + "\n",
+                                encoding="utf-8")
+            env[TYPESCRIPT_SETTINGS_ENV] = str(settings)
+    if getattr(args, "display_base", None) is not None:
+        driver_options += ["--server-num", str(args.display_base)]
     converted = private / "converted.toml"
+    if getattr(args, "prebuilt", None) is not None:
+        command = prebuilt_command(args.prebuilt, args.implementation, source, report)
+    else:
+        command = build_modsync(args.implementation, source, private, report, env)
     if args.implementation == "rust":
-        if not (source / "Cargo.toml").is_file():
-            raise Blocked("rust_source_manifest_missing")
-        run(["cargo", "build", "--locked", "--bin", "modsync"],
-            source, private, "build", report, env)
-        command = [str(private / "target/debug/modsync")]
         archive_map = []
         if args.archive_map:
             archive_map = ["--archive-map", str(args.archive_map.resolve(strict=True))]
@@ -3306,10 +3434,6 @@ def execute(args, report):
             raise Blocked("review_verified_drafts_output_missing")
         reviewed.replace(converted)
     else:
-        if not (source / "packages/cli/src/main.ts").is_file():
-            raise Blocked("typescript_source_entrypoint_missing")
-        run(["pnpm", "build"], source, private, "build", report, env)
-        command = ["node", str(source / "packages/cli/dist/main.js")]
         run(typescript_import_command(command, guide, converted),
             source, private, "convert", report, env)
         report["selected_component_count"] = select_base_components(converted)
@@ -3410,7 +3534,7 @@ def execute(args, report):
                 policy_guids, deselect, {normalized_reference(each) for each in all_installable},
                 report, env, getattr(args, "max_quarantine", QUARANTINE_MAX_ITERATIONS),
                 getattr(args, "max_quarantine_fraction", QUARANTINE_MAX_FRACTION),
-                reviewed_inputs_unchanged, choices)
+                reviewed_inputs_unchanged, choices, baseline_source, driver_options)
             if report.get(INSTALL_QUARANTINE_KEY):
                 omitted = {item["component_guid"] for item in quarantined_entries(report)}
                 report.setdefault("installable_before_quarantine_count", len(all_installable))
@@ -3427,7 +3551,9 @@ def execute(args, report):
             getattr(args, "max_quarantine_fraction", QUARANTINE_MAX_FRACTION),
             implementation="typescript", arguments=validate_arguments,
             selectable={normalized_reference(each) for each in all_installable},
-            extra=choices + [TYPESCRIPT_PHYSICAL_INSTALL_FLAG], before_phase=reviewed_inputs_unchanged)
+            extra=choices + [TYPESCRIPT_PHYSICAL_INSTALL_FLAG]
+            + ([TYPESCRIPT_NO_CHECKPOINTS_FLAG] if getattr(args, "no_checkpoints", False) else []),
+            before_phase=reviewed_inputs_unchanged, baseline_source=baseline_source)
         if report.get(INSTALL_QUARANTINE_KEY):
             omitted = {item["component_guid"] for item in quarantined_entries(report)}
             report.setdefault("installable_before_quarantine_count", len(all_installable))
@@ -3438,6 +3564,10 @@ def execute(args, report):
         return
     directories = ["--input", str(converted), "--game-dir", str(game),
                    "--source-dir", str(archives)]
+    if patcher is not None:
+        # Every patcher step through this file; --allow-processes is ModSync's only trust switch.
+        directories += ["--patcher-engine", PATCHER_ENGINES["rust"], "--patcher", str(patcher),
+                        "--allow-processes"]
     validate_with_quarantine(
         command, directories, deselect, converted, game, source, private, report, env,
         getattr(args, "max_quarantine", QUARANTINE_MAX_ITERATIONS),
@@ -3449,7 +3579,8 @@ def execute(args, report):
         driver_report = install_rust_gui_with_quarantine(
             command, source, private, game, archives, converted, policy_guids, deselect, report, env,
             getattr(args, "max_quarantine", QUARANTINE_MAX_ITERATIONS),
-            getattr(args, "max_quarantine_fraction", QUARANTINE_MAX_FRACTION))
+            getattr(args, "max_quarantine_fraction", QUARANTINE_MAX_FRACTION),
+            baseline_source, driver_options)
         gui_skipped = policy_guids | {item["component_guid"] for item in quarantined_entries(report)}
         if not driver_report.is_file() or driver_report.is_symlink():
             raise Blocked("gui_completion_report_missing")
@@ -3489,12 +3620,21 @@ def execute(args, report):
     install_with_quarantine(
         command, directories, deselect, converted, game, source, private, report, env,
         getattr(args, "max_quarantine", QUARANTINE_MAX_ITERATIONS),
-        getattr(args, "max_quarantine_fraction", QUARANTINE_MAX_FRACTION))
+        getattr(args, "max_quarantine_fraction", QUARANTINE_MAX_FRACTION),
+        baseline_source=baseline_source)
     report["status"] = "installed"
     report["reason"] = "native_install_command_succeeded"
 
 
+def terminated(signum, frame):
+    """SIGTERM (lockstep.py stopping a paired install) takes the same path as Ctrl-C: run() stops the
+    running command's own process group before ports.py exits."""
+    raise KeyboardInterrupt
+
+
 def main(argv=None):
+    global COMMAND_TIMEOUT
+    signal.signal(signal.SIGTERM, terminated)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--implementation", choices=("rust", "typescript"), required=True)
     parser.add_argument("--mode", choices=("cli", "gui"), required=True)
@@ -3518,9 +3658,46 @@ def main(argv=None):
     parser.add_argument("--max-quarantine-fraction", type=float, default=QUARANTINE_MAX_FRACTION,
                         help="most quarantined components (validate and install failures plus "
                              "dependents) as a fraction of the selected components (default %(default)s)")
-    for name in ("source", "guide", "game-dir", "archives", "work-dir", "report"):
+    parser.add_argument("--patcher-path", type=Path,
+                        help="external patcher with HoloPatcher's unattended CLI; every patcher step of the "
+                             "lane runs through it (Rust: --patcher-engine holo-patcher --patcher FILE "
+                             "--allow-processes, or the GUI settings.json; TypeScript: patcherEngine "
+                             "HoloPatcher and holoPatcherPath in the settings file). Default: unchanged")
+    parser.add_argument("--build-only", action="store_true",
+                        help="only build ModSync into --work-dir and record it in <work-dir>/build.json "
+                             "(needs --source, --work-dir and --report); status built")
+    parser.add_argument("--prebuilt", type=Path,
+                        help="a --build-only work directory: use its recorded build instead of building")
+    parser.add_argument("--temp-dir", type=Path,
+                        help="TMPDIR, TMP and TEMP for every command of the lane (ModSync extraction and "
+                             "patcher staging, xvfb-run); give each concurrent run its own")
+    parser.add_argument("--baseline-dir", type=Path,
+                        help="a pristine copy of --game-dir the caller owns; used as the quarantine baseline "
+                             "instead of copying the game (only read; must match the game's file list and sizes)")
+    parser.add_argument("--display-base", type=int,
+                        help="Rust GUI: first X display number xvfb-run tries (--server-num); give each "
+                             "concurrent run its own range")
+    parser.add_argument("--no-checkpoints", action="store_true",
+                        help="TypeScript CLI: install without the checkpoint store under <game>/.modsync; "
+                             "retries recover through the baseline restore only")
+    parser.add_argument("--command-timeout", type=int, default=COMMAND_TIMEOUT,
+                        help="seconds one ModSync command may run before it is stopped (default %(default)s)")
+    for name in ("source", "work-dir", "report"):
         parser.add_argument("--" + name, type=Path, required=True)
+    for name in ("guide", "game-dir", "archives"):
+        parser.add_argument("--" + name, type=Path)
     args = parser.parse_args(argv)
+    if not args.build_only and None in (args.guide, args.game_dir, args.archives):
+        parser.error("--guide, --game-dir and --archives are required unless --build-only")
+    if args.build_only and args.prebuilt is not None:
+        parser.error("--build-only and --prebuilt are exclusive")
+    if args.no_checkpoints and (args.implementation, args.mode) != ("typescript", "cli"):
+        parser.error("--no-checkpoints applies to the TypeScript CLI lane only")
+    if args.command_timeout <= 0:
+        parser.error("--command-timeout must be positive")
+    COMMAND_TIMEOUT = args.command_timeout
+    if args.display_base is not None and (args.implementation, args.mode) != ("rust", "gui"):
+        parser.error("--display-base applies to the Rust GUI lane only")
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(line_buffering=True)
@@ -3533,29 +3710,33 @@ def main(argv=None):
     try:
         destination = args.report.absolute()
         inputs = [path.resolve() for path in
-                  (args.source, args.game_dir, args.archives, args.guide.parent)]
+                  (args.source, args.game_dir, args.archives, args.guide and args.guide.parent)
+                  if path is not None]
         if destination.is_symlink() or destination.exists() or any(
             destination.resolve().is_relative_to(path) for path in inputs
         ):
             print("ports: report destination must be new and outside inputs", file=sys.stderr)
             return 2
         try:
-            execute(args, report)
-            errors = lane_errors(report)
-            report[LANE_ERRORS_KEY] = errors
-            omitted = omitted_components(report)
-            report[OMITTED_KEY] = omitted
-            report["partial"] = bool(omitted)
-            if report["status"] == "installed" and errors["count"]:
-                # Everything installable was installed, but the guide was not installed to spec.
-                report["status"] = "incomplete"
-                report["install_reason"] = report.get("reason")
-                report["reason"] = (f"install_incomplete: {errors['not_installed']} component(s) not "
-                                    f"installed and {errors['bind_unresolved']} installed from an "
-                                    "unresolved archive binding")
-            elif report["status"] == "installed" and omitted:
-                # Everything obtainable was installed to spec; unobtainable archives were left out.
-                report["status"] = "partial"
+            if args.build_only:
+                execute_build(args, report)
+            else:
+                execute(args, report)
+                errors = lane_errors(report)
+                report[LANE_ERRORS_KEY] = errors
+                omitted = omitted_components(report)
+                report[OMITTED_KEY] = omitted
+                report["partial"] = bool(omitted)
+                if report["status"] == "installed" and errors["count"]:
+                    # Everything installable was installed, but the guide was not installed to spec.
+                    report["status"] = "incomplete"
+                    report["install_reason"] = report.get("reason")
+                    report["reason"] = (f"install_incomplete: {errors['not_installed']} component(s) not "
+                                        f"installed and {errors['bind_unresolved']} installed from an "
+                                        "unresolved archive binding")
+                elif report["status"] == "installed" and omitted:
+                    # Everything obtainable was installed to spec; unobtainable archives were left out.
+                    report["status"] = "partial"
         except Blocked as error:
             report["reason"] = str(error)
         except (OSError, ValueError, TypeError, KeyError):
@@ -3567,7 +3748,7 @@ def main(argv=None):
         print(json.dumps(report), flush=True)
         print_diagnostics(report)
         sys.stderr.flush()
-        return 0 if report["status"] in PASSING_STATUSES else 1
+        return 0 if report["status"] in PASSING_STATUSES + ("built",) else 1
     except OSError:
         print("ports: unable to write sanitized report", file=sys.stderr)
         return 2
