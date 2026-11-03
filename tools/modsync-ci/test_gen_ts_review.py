@@ -1,3 +1,4 @@
+import ast
 import contextlib
 import importlib.util
 import io
@@ -227,9 +228,30 @@ class WorkflowAgreementTests(unittest.TestCase):
         text = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertNotIn("== rust ]]; then\n            policy", text)
         self.assertIn('review=(--restore-report "$RUNNER_TEMP/restore-report.json")', text)
-        wine = text[text.index("Install Wine for legacy patchers and Execute"):]
-        self.assertIn("if: matrix.implementation == 'typescript'", wine[:200])
-        self.assertIn("--no-install-recommends wine", wine[:400])
+        wine = re.search(
+            r"(?m)^      - name: Install Wine for legacy patchers and Execute\n"
+            r"(?P<body>.*?)(?=^      - |\Z)", text, re.DOTALL).group("body")
+        condition = re.search(r"(?m)^        if: (.+)$", wine).group(1).strip()
+        if condition.startswith("${{") and condition.endswith("}}"):
+            condition = condition[3:-2].strip()
+        # Check behavior, including precedence, rather than YAML spelling or a fixed text window.
+        expression = (condition.replace("success()", "succeeded")
+                      .replace("failure()", "failed")
+                      .replace("matrix.implementation", "implementation")
+                      .replace("&&", " and ").replace("||", " or "))
+        tree = ast.parse(expression, mode="eval")
+        allowed = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Compare,
+                   ast.Eq, ast.Name, ast.Load, ast.Constant)
+        self.assertTrue(all(isinstance(node, allowed) for node in ast.walk(tree)))
+        code = compile(tree, "<Wine step condition>", "eval")
+        for implementation in ("typescript", "rust"):
+            for status in ("success", "failure", "cancelled"):
+                with self.subTest(implementation=implementation, status=status):
+                    actual = eval(code, {"__builtins__": {}}, {
+                        "succeeded": status == "success", "failed": status == "failure",
+                        "implementation": implementation})
+                    self.assertEqual(actual, implementation == "typescript" and status != "cancelled")
+        self.assertIn("--no-install-recommends wine", wine)
 
 
 class CommittedManifestTests(unittest.TestCase):
