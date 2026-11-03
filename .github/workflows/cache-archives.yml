@@ -68,9 +68,11 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq 7zip 7zip-rar megatools libarchive-tools >/dev/null && { sudo apt-get install -y -qq unrar >/dev/null 2>&1 || echo "unrar unavailable; falling back to 7z/bsdtar"; }
           python -m pip install --quiet gdown
           python3 tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone"
-      # Optional extra: keeps the R2 bucket current when its secrets exist. Never fails the run.
+      # Optional bucket maintenance runs on schedule/manual dispatch, outside the push
+      # install critical path. Required archive refresh below still reads R2 as a fallback.
+      # Keep this inside the existing writer lock; do not introduce overlapping bucket writers.
       - name: Refresh the R2 bucket (optional)
-        if: ${{ (success() || failure()) && (steps.archive_source.outcome == 'success' && steps.archive_disk.outcome == 'success' && steps.archive_restore.outcome == 'success' && steps.archive_tools.outcome == 'success') }}
+        if: ${{ (success() || failure()) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (steps.archive_source.outcome == 'success' && steps.archive_disk.outcome == 'success' && steps.archive_restore.outcome == 'success' && steps.archive_tools.outcome == 'success') }}
         continue-on-error: true
         timeout-minutes: 40
         env:

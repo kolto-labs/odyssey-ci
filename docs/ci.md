@@ -109,8 +109,12 @@ for that step; the top level stays `contents: read`. `refresh` revalidates every
 archive and fetches only new or changed ones (see below), then keeps at most 2.5 GiB
 of objects (`--cache-limit-bytes 2684354560`; pinned first, then smallest; `.bik` never).
 Archives that do not fit stay in the manifest and are fetched by the lanes. Before
-that, an optional step runs `refresh_archives.py --max-items 500`, which keeps the
-R2 bucket current when its write secrets exist and otherwise skips itself. The job
+that, on scheduled and manually dispatched runs only, an optional step runs
+`refresh_archives.py --max-items 500`, which keeps the R2 bucket current when its
+write secrets exist and otherwise skips itself. Push runs skip this maintenance
+but still run the required archive refresh, including its R2 read fallback and
+archive verification. The existing writer lock and full-run non-overlap policy
+are unchanged. The job
 installs `7zip` (with `7zip-rar`), `megatools`, `libarchive-tools` (`bsdtar`),
 `unrar` when available, and `gdown`, so `cache.py` can fetch MEGA and Google Drive
 links and check RAR/7z archives. It is the only job that saves the cache or gets the
