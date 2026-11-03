@@ -390,10 +390,14 @@ class ArtifactsClient:
                 found[artifact.get("id")] = artifact
             total = payload.get("total_count")
             if len(batch) < self._per_page:
+                if isinstance(total, int) and len(found) < total:
+                    raise ArtifactError("list artifacts: incomplete listing")
                 break
             if isinstance(total, int) and len(found) >= total:
                 break
             page += 1
+        else:
+            raise ArtifactError("list artifacts: pagination limit reached before completion")
         now = datetime.now(timezone.utc)
         result = []
         for artifact in found.values():

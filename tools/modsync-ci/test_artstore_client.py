@@ -258,6 +258,13 @@ class ListingTests(ClientTestCase):
         self.assertEqual(pages, [["1"], ["2"], ["3"]])
         self.assertTrue(all(r["query"]["per_page"] == ["100"] for r in self.api.requests))
 
+    def test_page_limit_refuses_partial_listing(self):
+        for index in range(1, 102):
+            self.api.add(index, "blob-%d" % index)
+        self.client._max_pages = 1
+        with self.assertRaisesRegex(artstore_client.ArtifactError, "pagination limit"):
+            self.client.list_artifacts(include_expired=True)
+
     def test_exact_multiple_of_page_size_stops_without_extra_call(self):
         for index in range(1, 201):
             self.api.add(index, "blob-%d" % index)

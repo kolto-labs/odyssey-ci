@@ -174,7 +174,7 @@ def _read_fragment(client, artifact, scratch):
     return core.load_index(destination)
 
 
-def _index_from_listing(client, listing, keep, now_epoch):
+def _index_from_listing(client, listing, keep, now_epoch, *, strict=False):
     fragments = _newest_first([item for item in listing
                                if str(item.get("name", "")).startswith(core.INDEX_PREFIX)
                                and not _is_dead(item, now_epoch)])
@@ -191,8 +191,11 @@ def _index_from_listing(client, listing, keep, now_epoch):
             except (client_mod.ArtifactError, ValueError, OSError) as exc:
                 _log("warning", "index artifact %s unreadable (%s)" % (artifact.get("id"),
                                                                        _describe(exc)))
+                if strict:
+                    raise client_mod.ArtifactError(
+                        "cleanup refused: index artifact %s is unreadable" % artifact.get("id")) from exc
                 continue
-            if len(loaded) >= keep:
+            if not strict and len(loaded) >= keep:
                 break
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -514,12 +517,25 @@ def prune(client, index, keep_days_over=None, *, dry_run=True, keep_indexes=INDE
     """
     now_epoch = _now(now)
     listing = client.list_artifacts(include_expired=True)
+    # A tolerant/limited read view is not an authoritative deletion keep-set. Read every
+    # live fragment, failing closed even when an older readable fragment could serve reads.
+    verified = _index_from_listing(client, listing, None, now_epoch, strict=True)
+    # Keep the existing empty-view protection conservative: it retains every live pack.
+    if index["blobs"]:
+        index = core.merge_indexes([index, verified], now_epoch)
     plan, kept, notes = _prune_plan(listing, index, keep_days_over, keep_indexes, grace_hours,
                                     now_epoch)
     result = {"dry_run": bool(dry_run), "delete": plan, "deleted": [], "failed": [],
               "kept": kept, "notes": notes}
     if dry_run:
         return result
+    # Refuse a plan derived from a listing that changed while indexes were read.
+    fields = ("id", "name", "created_at", "expires_at", "expired", "size_in_bytes")
+    def snapshot(items):
+        return sorted(json.dumps({key: item.get(key) for key in fields}, sort_keys=True)
+                      for item in items)
+    if snapshot(listing) != snapshot(client.list_artifacts(include_expired=True)):
+        raise client_mod.ArtifactError("cleanup refused: artifact listing changed during validation")
     for item in plan:
         try:
             client.delete_artifact(item["id"])

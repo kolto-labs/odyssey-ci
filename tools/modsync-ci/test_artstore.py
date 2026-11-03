@@ -562,6 +562,17 @@ class IndexTests(StoreTestCase):
         self.assertAlmostEqual(entry["expires_at"], expires, delta=2)
 
 
+class ProducerNamespaceTests(StoreTestCase):
+    def test_same_run_producers_have_disjoint_pack_and_index_names(self):
+        path, sha = self.make_file("a.bin", 300, 1)
+        results = []
+        for producer in ("refresh", "renew"):
+            with mock.patch.dict(os.environ, {"ARTSTORE_NAME_SUFFIX": producer}):
+                results.append(artstore.stage([(path, sha)], self.tmp / producer))
+        self.assertNotEqual(results[0]["pack_name"], results[1]["pack_name"])
+        self.assertNotEqual(results[0]["index_name"], results[1]["index_name"])
+
+
 class RefreshTests(StoreTestCase):
     def test_refresh_plan_selects_blobs_expiring_within_window(self):
         soon, soon_sha = self.make_file("soon.bin", 300, 1)
@@ -615,8 +626,42 @@ class PruneTests(StoreTestCase):
                                        created_at=iso(old))
         self.fresh_orphan = self.api.add("artstore-pack-fresh-1-0", b"x" * 10)
         self.other_id = self.api.add("unrelated-artifact", b"x" * 10, created_at=iso(old))
-        self.index_ids = [self.api.add("artstore-index-old-%d" % number, b"x" * 10,
+        empty = self.tmp / "old-index"
+        empty.mkdir()
+        (empty / "index.json").write_text(json.dumps(core.new_index()))
+        self.index_ids = [self.api.add("artstore-index-old-%d" % number, zip_directory(empty),
                                        created_at=iso(old + number)) for number in range(6)]
+
+    def test_unreadable_newer_index_blocks_cleanup_with_readable_older_index(self):
+        self.api.add("artstore-index-new-unreadable", b"broken", created_at=iso(time.time() + 9999))
+        partial = artstore.load_index(self.client)
+        self.assertIn(self.keep_sha, partial["blobs"])
+        before = {item["id"] for item in self.api.artifacts}
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run), self.assertRaisesRegex(
+                    artstore_client.ArtifactError, "cleanup refused.*unreadable"):
+                artstore.prune(self.client, partial, dry_run=dry_run)
+        self.assertEqual(before, {item["id"] for item in self.api.artifacts})
+        self.assertFalse([r for r in self.api.requests if r["method"] == "DELETE"])
+
+    def test_cleanup_reads_beyond_tolerant_index_limit(self):
+        # The referenced pack exists only in the oldest fragment, beyond the read-path limit.
+        partial = artstore.load_index(self.client, keep=1)
+        self.assertIn(self.keep_sha, partial["blobs"])
+        self.blob.blobs[self.index_ids[0]] = b"broken oldest fragment"
+        with self.assertRaisesRegex(artstore_client.ArtifactError, "cleanup refused.*unreadable"):
+            artstore.prune(self.client, partial, dry_run=False)
+        self.assertFalse([r for r in self.api.requests if r["method"] == "DELETE"])
+
+    def test_listing_change_before_apply_blocks_all_deletes(self):
+        index = artstore.load_index(self.client)
+        listing = self.client.list_artifacts(include_expired=True)
+        changed = [dict(item) for item in listing]
+        changed[0]["size_in_bytes"] += 1
+        with mock.patch.object(self.client, "list_artifacts", side_effect=[listing, changed]), \
+                self.assertRaisesRegex(artstore_client.ArtifactError, "listing changed"):
+            artstore.prune(self.client, index, dry_run=False)
+        self.assertFalse([r for r in self.api.requests if r["method"] == "DELETE"])
 
     def test_dry_run_is_default_and_deletes_nothing(self):
         before = [item["id"] for item in self.api.artifacts]

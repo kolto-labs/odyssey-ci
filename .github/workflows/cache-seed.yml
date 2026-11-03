@@ -1,0 +1,73 @@
+# Step status guard: success() || failure() overrides implicit success() gating,
+# allowing eligible steps after success or failure; it is false when cancelled.
+# Existing input/platform/prerequisite predicates still apply. This guard does not
+# change workflow concurrency or aggregate failures; failure reporting is separate.
+# https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions
+# https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation
+name: Archive seed (reusable)
+on:
+  workflow_call:
+    inputs:
+      seed_dry_run:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  seed:
+    name: seed archive cache
+    environment: mod-cache-seed
+    concurrency:
+      group: mod-cache-writer
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        id: seed_source
+        if: ${{ success() || failure() }}
+        with:
+          persist-credentials: false
+      - name: Free disk space
+        id: seed_disk
+        if: ${{ success() || failure() }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h "$RUNNER_TEMP" | tail -n 1
+      - name: Install archive tools
+        id: seed_tools
+        if: ${{ success() || failure() }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq 7zip 7zip-rar megatools libarchive-tools >/dev/null && { sudo apt-get install -y -qq unrar >/dev/null 2>&1 || echo "unrar unavailable; falling back to 7z/bsdtar"; }
+          python -m pip install --quiet gdown
+          python3 tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone"
+      - name: Seed archives from staging (verified against the pins)
+        if: ${{ (success() || failure()) && (steps.seed_source.outcome == 'success' && steps.seed_disk.outcome == 'success' && steps.seed_tools.outcome == 'success') }}
+        env:
+          SEED_STAGING_RCLONE_CONF_B64: ${{ secrets.SEED_STAGING_RCLONE_CONF_B64 }}
+          SEED_DRY_RUN: ${{ inputs.seed_dry_run }}
+          RCLONE_CONFIG_MODCACHE_TYPE: s3
+          RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_MODCACHE_REGION: auto
+          RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+          RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: |
+          set -euo pipefail
+          options=()
+          if [[ "$SEED_DRY_RUN" == "true" ]]; then options+=(--dry-run); fi
+          python tools/modsync-ci/seed_archives.py "${options[@]}"
+      - name: Verify every pin restores with the read-only credentials
+        if: ${{ (success() || failure()) && (!inputs.seed_dry_run) }}
+        env:
+          RCLONE_CONFIG_MODCACHE_TYPE: s3
+          RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_MODCACHE_REGION: auto
+          RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+          RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_READ_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_READ_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: python tools/modsync-ci/seed_archives.py --verify
