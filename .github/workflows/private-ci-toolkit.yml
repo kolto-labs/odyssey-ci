@@ -1,3 +1,8 @@
+# Active credential-free private-controller tests on Linux, Windows and macOS.
+# Runs on main pushes touching tools/private-ci/**, or manual dispatch. No reusable
+# caller or workflow outputs; reports tests without private inputs or game files.
+# This tests the separate controller, not the ordinary ci.yml installation matrix.
+
 # Step status guard: success() || failure() overrides implicit success() gating,
 # allowing eligible steps after success or failure; it is false when cancelled.
 # Existing input/platform/prerequisite predicates still apply. This guard does not

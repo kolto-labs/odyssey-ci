@@ -1,3 +1,9 @@
+# Disabled maintenance workflow: dispatch remains visible, but the job is stopped
+# unconditionally and its schedule is removed. Previously built encrypted private
+# cache segments/indexes and removed unreferenced generations. Artifact storage
+# is shared across runs, so this retired store does not expand the allowance.
+# Existing artifacts and recovery tooling are retained; this produces nothing.
+
 # Step status guard: success() || failure() overrides implicit success() gating,
 # allowing eligible steps after success or failure; it is false when cancelled.
 # Existing input/platform/prerequisite predicates still apply. This guard does not
@@ -15,6 +21,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   refresh:
+    name: Retired encrypted artifact-cache maintenance (disabled)
     # Retired artifact-cache maintenance; preserve all existing generations.
     if: ${{ false && !cancelled() }}
     # The payload command and licensed inputs stay on an owner-controlled runner.

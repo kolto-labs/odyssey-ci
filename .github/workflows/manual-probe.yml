@@ -1,3 +1,9 @@
+# Disabled Legacy JSON reference probe: dispatch metadata is retained, but its
+# job never executes. Formerly exercised selected reviewed JSON-plan steps on
+# fresh game copies and uploaded evidence. Disabled because scripted JSON is not
+# the requested manual route; the intended AI-operated route is not implemented.
+# No caller or workflow outputs; existing plans and executor remain preserved.
+
 # Step status guard: success() || failure() overrides implicit success() gating,
 # allowing eligible steps after success or failure; it is false when cancelled.
 # Existing input/platform/prerequisite predicates still apply. This guard does not

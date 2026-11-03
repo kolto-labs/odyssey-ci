@@ -1,3 +1,9 @@
+# Dispatch-only K1 human-manual controller entry; calls full-build-job.yml
+# with mode=manual on a self-hosted runner. Dispatch is enabled, but the controller
+# intentionally blocks automated installation: a human must perform it. Separate
+# from disabled Legacy JSON and the unimplemented AI manual route. No workflow
+# outputs; the reusable controller owns any encrypted receipt artifacts.
+
 name: K1 full build (manual)
 on:
   workflow_dispatch:

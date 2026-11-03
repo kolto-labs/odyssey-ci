@@ -1,3 +1,8 @@
+# Active reusable workflow; called only by ci.yml (workflow_call, no own schedule).
+# Prepares K1/K2 Actions caches, using retained encrypted backups, seeds or Steam
+# as applicable. Produces caches/backups and job status, no workflow outputs.
+# Game backups are separate from the retired mod artifact-store publisher.
+
 # Step status guard: success() || failure() overrides implicit success() gating,
 # allowing eligible steps after success or failure; it is false when cancelled.
 # Existing input/platform/prerequisite predicates still apply. This guard does not

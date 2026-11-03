@@ -1,3 +1,9 @@
+# Dispatch-only K1 GUI private-controller entry; calls full-build-job.yml
+# for the chosen platform/implementation matrix. No ordinary CI caller or schedule.
+# Default hosted execution is blocked by that controller; self-hosted execution
+# requires valid private configuration. Results/receipts come from the reusable
+# controller, with no workflow outputs. This is separate from ci.yml's app lanes.
+
 name: K1 full build (gui)
 on:
   workflow_dispatch:

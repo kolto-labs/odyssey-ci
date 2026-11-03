@@ -1,3 +1,10 @@
+# Active orchestration: main pushes (except ignored documentation paths), PRs,
+# published releases, Monday/Thursday 04:23 UTC, or manual dispatch.
+# Calls cache-game.yml and cache-archives.yml before Rust/TypeScript CLI/GUI lanes
+# for both games; seed-only dispatch calls cache-seed.yml instead. Results are job
+# statuses and sealed diagnostics, not proof of four-route parity. Legacy JSON
+# execution and artifact-store renewal are disabled; existing recovery reads remain.
+
 # Step status guard: success() || failure() overrides implicit success() gating,
 # allowing eligible steps after success or failure; it is false when cancelled.
 # Existing input/platform/prerequisite predicates still apply. This guard does not
@@ -6,10 +13,8 @@
 # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation
 name: CI
 
-# Orchestrate reusable cache workflows and every install lane.
-# Caches only make runs faster. A missing cache is refilled; the run fails only
-# when a job cannot actually get the game, cannot get a required mod archive from
-# any source (cache, P2P, the optional R2 bucket, the website) or finish its install.
+# Cache misses can use fallback sources. Install coverage, recovery verification and
+# diagnostic publication can also fail; a cache hit alone does not prove success.
 on:
   push:
     branches: [main]
@@ -119,7 +124,7 @@ jobs:
     secrets: inherit
 
   artstore-refresh:
-    name: artstore refresh
+    name: Retired artifact-store renewal (disabled)
     needs: [mods]
     if: ${{ false && !cancelled() && !inputs.seed_archives && !inputs.game_seed_probe && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     permissions:

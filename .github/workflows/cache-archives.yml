@@ -1,3 +1,10 @@
+# Active reusable archive preparation; ci.yml calls mode=refresh before installs.
+# Restores/refreshes ordinary Actions cache and returns archive_cache_key for lane
+# restores. Optional R2 maintenance is schedule/dispatch-only. Existing artifact
+# packs remain a recovery source and the read-back check remains active.
+# Pack/index publication and mode=renew are retired: runs share storage allowance;
+# new runs cannot multiply it. No existing packs or recovery readers are removed.
+
 # Step status guard: success() || failure() overrides implicit success() gating,
 # allowing eligible steps after success or failure; it is false when cancelled.
 # Existing input/platform/prerequisite predicates still apply. This guard does not
@@ -35,7 +42,7 @@ jobs:
     timeout-minutes: 120
     # A job-level block replaces the top-level one, so contents: read is repeated. actions: write
     # is only for the prune step (gh cache delete). It also covers the artifact-store reads here;
-    # artifact cleanup planning has its own job (artstore-refresh).
+    # artifact cleanup planning is retained in the disabled artstore-refresh job.
     permissions:
       contents: read
       actions: write
@@ -185,9 +192,9 @@ jobs:
           done
       # Retired: explicit false guards stop every publisher; recovery reads remain enabled.
       # Publishes cached objects the artifact store lacks (or will soon expire) as sealed pack artifacts
-      # plus an index fragment. Never on pull requests. A failure here only warns; it never fails the job.
+      # plus an index fragment. Publication is now disabled; retained failure gates still report real failures.
       # The 3 GiB pack budget keeps the 2.5 GiB cache in one pack; the three upload slots are headroom.
-      - name: Stage artifact store packs
+      - name: Stage artifact store packs (disabled)
         id: stage
         if: ${{ false && (success() || failure()) && (always() && contains(fromJSON('["push","schedule","release","workflow_dispatch"]'), github.event_name)) && (steps.refresh.outcome == 'success') }}
         continue-on-error: true
@@ -221,7 +228,7 @@ jobs:
               print("pack%d=%s" % (slot + 1, os.path.basename(packs[slot]["dir"]) if slot < len(packs) else ""))
           print("index=%s" % ((summary.get("index_name") or "") if packs else ""))
           PY
-      - name: Upload artifact store pack 1
+      - name: Upload artifact store pack 1 (disabled)
         id: up1
         if: ${{ false && (success() || failure()) && (always() && steps.stage.outputs.pack1 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
@@ -230,7 +237,7 @@ jobs:
           name: ${{ steps.stage.outputs.pack1 }}
           directory: ${{ runner.temp }}/artstore-pack/${{ steps.stage.outputs.pack1 }}
           if-exists: fail
-      - name: Upload artifact store pack 2
+      - name: Upload artifact store pack 2 (disabled)
         id: up2
         if: ${{ false && (success() || failure()) && (always() && steps.stage.outputs.pack2 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
@@ -239,7 +246,7 @@ jobs:
           name: ${{ steps.stage.outputs.pack2 }}
           directory: ${{ runner.temp }}/artstore-pack/${{ steps.stage.outputs.pack2 }}
           if-exists: fail
-      - name: Upload artifact store pack 3
+      - name: Upload artifact store pack 3 (disabled)
         id: up3
         if: ${{ false && (success() || failure()) && (always() && steps.stage.outputs.pack3 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
@@ -250,7 +257,7 @@ jobs:
           if-exists: fail
       # Publish the index only after every staged pack has an uploaded artifact ID.
       # Existing names fail closed; never adopt an unverified same-name artifact.
-      - name: Upload artifact store index
+      - name: Upload artifact store index (disabled)
         id: upindex
         if: ${{ false && (success() || failure()) && (always() && steps.stage.outputs.index != '' && (steps.up1.outcome == 'success' || steps.up2.outcome == 'success' || steps.up3.outcome == 'success')) && (steps.stage.outcome == 'success' && (steps.stage.outputs.pack1 == '' || (steps.up1.outcome == 'success' && steps.up1.outputs.artifact-id != '')) && (steps.stage.outputs.pack2 == '' || (steps.up2.outcome == 'success' && steps.up2.outputs.artifact-id != '')) && (steps.stage.outputs.pack3 == '' || (steps.up3.outcome == 'success' && steps.up3.outputs.artifact-id != ''))) }}
         continue-on-error: true
@@ -377,7 +384,7 @@ jobs:
   # sealed again into a new pack with a new index fragment, then a read-only cleanup plan is produced. This is the only job (besides mods, for its cache deletes) with actions: write. It runs after
   # mods and in the same concurrency group, so two index writers never overlap.
   artstore-refresh:
-    name: artstore refresh
+    name: Retired artifact-store renewal (disabled)
     # Retired publication/renewal: retain recovery readers and existing artifacts.
     if: ${{ false && !cancelled() && inputs.mode == 'renew' }}
     concurrency:
@@ -445,7 +452,7 @@ jobs:
           echo "count=$(wc -l < "$root/list.tsv")" >> "$GITHUB_OUTPUT"
           echo "planned=$planned" >> "$GITHUB_OUTPUT"
           echo "failed=$failed" >> "$GITHUB_OUTPUT"
-      - name: Stage artifact store packs
+      - name: Stage artifact store packs (disabled)
         id: stage
         if: ${{ false && (success() || failure()) && (steps.fetch.outputs.count != '0') && (steps.fetch.outcome == 'success' && steps.fetch.outputs.failed == '0' && steps.fetch.outputs.count != '' && steps.fetch.outputs.count > 0) }}
         continue-on-error: true
@@ -470,7 +477,7 @@ jobs:
               print("pack%d=%s" % (slot + 1, os.path.basename(packs[slot]["dir"]) if slot < len(packs) else ""))
           print("index=%s" % ((summary.get("index_name") or "") if packs else ""))
           PY
-      - name: Upload artifact store pack 1
+      - name: Upload artifact store pack 1 (disabled)
         id: up1
         if: ${{ false && (success() || failure()) && (steps.stage.outputs.pack1 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
@@ -479,7 +486,7 @@ jobs:
           name: ${{ steps.stage.outputs.pack1 }}
           directory: ${{ runner.temp }}/artstore-pack/${{ steps.stage.outputs.pack1 }}
           if-exists: fail
-      - name: Upload artifact store pack 2
+      - name: Upload artifact store pack 2 (disabled)
         id: up2
         if: ${{ false && (success() || failure()) && (steps.stage.outputs.pack2 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
@@ -488,7 +495,7 @@ jobs:
           name: ${{ steps.stage.outputs.pack2 }}
           directory: ${{ runner.temp }}/artstore-pack/${{ steps.stage.outputs.pack2 }}
           if-exists: fail
-      - name: Upload artifact store pack 3
+      - name: Upload artifact store pack 3 (disabled)
         id: up3
         if: ${{ false && (success() || failure()) && (steps.stage.outputs.pack3 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
@@ -497,7 +504,7 @@ jobs:
           name: ${{ steps.stage.outputs.pack3 }}
           directory: ${{ runner.temp }}/artstore-pack/${{ steps.stage.outputs.pack3 }}
           if-exists: fail
-      - name: Upload artifact store index
+      - name: Upload artifact store index (disabled)
         id: upindex
         if: ${{ false && (success() || failure()) && (steps.stage.outputs.index != '' && (steps.up1.outcome == 'success' || steps.up2.outcome == 'success' || steps.up3.outcome == 'success')) && (steps.stage.outcome == 'success' && (steps.stage.outputs.pack1 == '' || (steps.up1.outcome == 'success' && steps.up1.outputs.artifact-id != '')) && (steps.stage.outputs.pack2 == '' || (steps.up2.outcome == 'success' && steps.up2.outputs.artifact-id != '')) && (steps.stage.outputs.pack3 == '' || (steps.up3.outcome == 'success' && steps.up3.outputs.artifact-id != ''))) }}
         continue-on-error: true

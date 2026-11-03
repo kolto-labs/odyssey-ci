@@ -1,3 +1,11 @@
+# Reusable private barrier controller, called by all six full-build-{cli,gui,manual}
+# K1/K2 dispatch wrappers; not called by ci.yml and has no independent trigger.
+# Hosted execution is explicitly blocked pending a trusted private source adapter.
+# Self-hosted CLI/GUI execution requires valid private configuration and ordered
+# component receipts. Manual mode deliberately stops for human installation;
+# it is not the Legacy JSON executor or an implemented AI manual route.
+# Produces encrypted receipt artifacts when available, no workflow outputs.
+
 # Step status guard: success() || failure() overrides implicit success() gating,
 # allowing eligible steps after success or failure; it is false when cancelled.
 # Existing input/platform/prerequisite predicates still apply. This guard does not
