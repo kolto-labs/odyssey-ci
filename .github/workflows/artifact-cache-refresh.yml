@@ -6,8 +6,6 @@
 # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation
 name: Refresh encrypted artifact cache
 on:
-  schedule:
-    - cron: '0 6 1,15 * *'
   workflow_dispatch:
 permissions:
   contents: read
@@ -17,6 +15,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   refresh:
+    # Retired artifact-cache maintenance; preserve all existing generations.
+    if: ${{ false && !cancelled() }}
     # The payload command and licensed inputs stay on an owner-controlled runner.
     runs-on: [self-hosted, modsync-session]
     timeout-minutes: 240

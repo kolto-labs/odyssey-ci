@@ -121,7 +121,7 @@ jobs:
   artstore-refresh:
     name: artstore refresh
     needs: [mods]
-    if: ${{ !cancelled() && !inputs.seed_archives && !inputs.game_seed_probe && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ false && !cancelled() && !inputs.seed_archives && !inputs.game_seed_probe && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     permissions:
       contents: read
       actions: write

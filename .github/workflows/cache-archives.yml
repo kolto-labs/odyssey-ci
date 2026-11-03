@@ -183,12 +183,13 @@ jobs:
             echo "Deleting stale cache $key"
             gh cache delete "$key"
           done
+      # Retired: explicit false guards stop every publisher; recovery reads remain enabled.
       # Publishes cached objects the artifact store lacks (or will soon expire) as sealed pack artifacts
       # plus an index fragment. Never on pull requests. A failure here only warns; it never fails the job.
       # The 3 GiB pack budget keeps the 2.5 GiB cache in one pack; the three upload slots are headroom.
       - name: Stage artifact store packs
         id: stage
-        if: ${{ (success() || failure()) && (always() && contains(fromJSON('["push","schedule","release","workflow_dispatch"]'), github.event_name)) && (steps.refresh.outcome == 'success') }}
+        if: ${{ false && (success() || failure()) && (always() && contains(fromJSON('["push","schedule","release","workflow_dispatch"]'), github.event_name)) && (steps.refresh.outcome == 'success') }}
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -222,7 +223,7 @@ jobs:
           PY
       - name: Upload artifact store pack 1
         id: up1
-        if: ${{ (success() || failure()) && (always() && steps.stage.outputs.pack1 != '') && (steps.stage.outcome == 'success') }}
+        if: ${{ false && (success() || failure()) && (always() && steps.stage.outputs.pack1 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -231,7 +232,7 @@ jobs:
           if-exists: fail
       - name: Upload artifact store pack 2
         id: up2
-        if: ${{ (success() || failure()) && (always() && steps.stage.outputs.pack2 != '') && (steps.stage.outcome == 'success') }}
+        if: ${{ false && (success() || failure()) && (always() && steps.stage.outputs.pack2 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -240,7 +241,7 @@ jobs:
           if-exists: fail
       - name: Upload artifact store pack 3
         id: up3
-        if: ${{ (success() || failure()) && (always() && steps.stage.outputs.pack3 != '') && (steps.stage.outcome == 'success') }}
+        if: ${{ false && (success() || failure()) && (always() && steps.stage.outputs.pack3 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -251,7 +252,7 @@ jobs:
       # Existing names fail closed; never adopt an unverified same-name artifact.
       - name: Upload artifact store index
         id: upindex
-        if: ${{ (success() || failure()) && (always() && steps.stage.outputs.index != '' && (steps.up1.outcome == 'success' || steps.up2.outcome == 'success' || steps.up3.outcome == 'success')) && (steps.stage.outcome == 'success' && (steps.stage.outputs.pack1 == '' || (steps.up1.outcome == 'success' && steps.up1.outputs.artifact-id != '')) && (steps.stage.outputs.pack2 == '' || (steps.up2.outcome == 'success' && steps.up2.outputs.artifact-id != '')) && (steps.stage.outputs.pack3 == '' || (steps.up3.outcome == 'success' && steps.up3.outputs.artifact-id != ''))) }}
+        if: ${{ false && (success() || failure()) && (always() && steps.stage.outputs.index != '' && (steps.up1.outcome == 'success' || steps.up2.outcome == 'success' || steps.up3.outcome == 'success')) && (steps.stage.outcome == 'success' && (steps.stage.outputs.pack1 == '' || (steps.up1.outcome == 'success' && steps.up1.outputs.artifact-id != '')) && (steps.stage.outputs.pack2 == '' || (steps.up2.outcome == 'success' && steps.up2.outputs.artifact-id != '')) && (steps.stage.outputs.pack3 == '' || (steps.up3.outcome == 'success' && steps.up3.outputs.artifact-id != ''))) }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -377,7 +378,8 @@ jobs:
   # mods and in the same concurrency group, so two index writers never overlap.
   artstore-refresh:
     name: artstore refresh
-    if: ${{ !cancelled() && inputs.mode == 'renew' }}
+    # Retired publication/renewal: retain recovery readers and existing artifacts.
+    if: ${{ false && !cancelled() && inputs.mode == 'renew' }}
     concurrency:
       group: mod-cache-writer
       cancel-in-progress: false
@@ -445,7 +447,7 @@ jobs:
           echo "failed=$failed" >> "$GITHUB_OUTPUT"
       - name: Stage artifact store packs
         id: stage
-        if: ${{ (success() || failure()) && (steps.fetch.outputs.count != '0') && (steps.fetch.outcome == 'success' && steps.fetch.outputs.failed == '0' && steps.fetch.outputs.count != '' && steps.fetch.outputs.count > 0) }}
+        if: ${{ false && (success() || failure()) && (steps.fetch.outputs.count != '0') && (steps.fetch.outcome == 'success' && steps.fetch.outputs.failed == '0' && steps.fetch.outputs.count != '' && steps.fetch.outputs.count > 0) }}
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -470,7 +472,7 @@ jobs:
           PY
       - name: Upload artifact store pack 1
         id: up1
-        if: ${{ (success() || failure()) && (steps.stage.outputs.pack1 != '') && (steps.stage.outcome == 'success') }}
+        if: ${{ false && (success() || failure()) && (steps.stage.outputs.pack1 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -479,7 +481,7 @@ jobs:
           if-exists: fail
       - name: Upload artifact store pack 2
         id: up2
-        if: ${{ (success() || failure()) && (steps.stage.outputs.pack2 != '') && (steps.stage.outcome == 'success') }}
+        if: ${{ false && (success() || failure()) && (steps.stage.outputs.pack2 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -488,7 +490,7 @@ jobs:
           if-exists: fail
       - name: Upload artifact store pack 3
         id: up3
-        if: ${{ (success() || failure()) && (steps.stage.outputs.pack3 != '') && (steps.stage.outcome == 'success') }}
+        if: ${{ false && (success() || failure()) && (steps.stage.outputs.pack3 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -497,7 +499,7 @@ jobs:
           if-exists: fail
       - name: Upload artifact store index
         id: upindex
-        if: ${{ (success() || failure()) && (steps.stage.outputs.index != '' && (steps.up1.outcome == 'success' || steps.up2.outcome == 'success' || steps.up3.outcome == 'success')) && (steps.stage.outcome == 'success' && (steps.stage.outputs.pack1 == '' || (steps.up1.outcome == 'success' && steps.up1.outputs.artifact-id != '')) && (steps.stage.outputs.pack2 == '' || (steps.up2.outcome == 'success' && steps.up2.outputs.artifact-id != '')) && (steps.stage.outputs.pack3 == '' || (steps.up3.outcome == 'success' && steps.up3.outputs.artifact-id != ''))) }}
+        if: ${{ false && (success() || failure()) && (steps.stage.outputs.index != '' && (steps.up1.outcome == 'success' || steps.up2.outcome == 'success' || steps.up3.outcome == 'success')) && (steps.stage.outcome == 'success' && (steps.stage.outputs.pack1 == '' || (steps.up1.outcome == 'success' && steps.up1.outputs.artifact-id != '')) && (steps.stage.outputs.pack2 == '' || (steps.up2.outcome == 'success' && steps.up2.outputs.artifact-id != '')) && (steps.stage.outputs.pack3 == '' || (steps.up3.outcome == 'success' && steps.up3.outputs.artifact-id != ''))) }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
