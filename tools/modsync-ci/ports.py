@@ -1422,6 +1422,8 @@ QUARANTINE_CAP_REASON = "validate_quarantine_cap_exceeded"
 INSTALL_QUARANTINE_KEY = "quarantined_install_failures"
 INSTALL_FAILURE_KIND = "install_failure"
 INSTALL_QUARANTINE_CAP_REASON = "install_quarantine_cap_exceeded"
+# Disk exhaustion is a lane infrastructure failure, not a defective mod.
+DISK_EXHAUSTION = re.compile(r"\bENOSPC\b|no space left on device|disk quota exceeded", re.IGNORECASE)
 QUARANTINE_FAILURE_KINDS = (VALIDATE_FAILURE_KIND, INSTALL_FAILURE_KIND)
 QUARANTINE_PHASES = {
     "validate": {"key": QUARANTINE_KEY, "kind": VALIDATE_FAILURE_KIND,
@@ -2098,6 +2100,8 @@ def install_with_quarantine(command, directories, deselect, converted, game, sou
                 quarantine_stop(report, "install", stage, reason, parsed, failure)
 
             lowered = ANSI_ESCAPE.sub("", text).lower()
+            if DISK_EXHAUSTION.search(lowered):
+                stop("disk_exhaustion")
             if policy["max_iterations"] <= 0:
                 stop("quarantine_disabled")
             if any(marker in lowered for marker in UNFINISHED_INSTALL_MARKERS) and not failures:
@@ -2353,6 +2357,8 @@ def install_rust_gui_with_quarantine(command, source, private, game, archives, c
                 quarantine_stop(report, "install", stage, reason, parsed, failure)
 
             lowered = ANSI_ESCAPE.sub("", driver_failure["text"]).lower()
+            if DISK_EXHAUSTION.search(lowered):
+                stop("disk_exhaustion")
             if policy["max_iterations"] <= 0:
                 stop("quarantine_disabled")
             if "panicked at" in lowered or "stack backtrace" in lowered:
@@ -2531,6 +2537,8 @@ def install_gui_with_quarantine(command, source, private, game, archives, conver
                                 details=None if parsed else {"error_line": error_line})
 
             lowered = ANSI_ESCAPE.sub("", install_failure.get("error") or "").lower()
+            if DISK_EXHAUSTION.search(lowered):
+                stop("disk_exhaustion")
             if policy["max_iterations"] <= 0:
                 stop("quarantine_disabled")
             if any(marker in lowered for marker in UNFINISHED_INSTALL_MARKERS) and not failures:

@@ -2900,6 +2900,15 @@ class InstallFailureParserTests(unittest.TestCase):
 
 
 class InstallQuarantineTests(unittest.TestCase):
+    def test_disk_exhaustion_does_not_quarantine_a_mod_or_retry(self):
+        for message in ("ENOSPC: write", "No space left on device (os error 28)", "Disk quota exceeded"):
+            with self.subTest(message=message):
+                commands, report, error = self.run_lane(install_failures=[install_error("Mod 05", message=message)])
+                self.assertEqual(error, "install_failed")
+                self.assertEqual(report["quarantine"]["stopped"]["reason"], "disk_exhaustion")
+                self.assertFalse(report[ports.INSTALL_QUARANTINE_KEY])
+                self.assertFalse(any("retry" in stage or "restore" in stage for stage, _ in commands))
+
     prepare = ExecuteCommandTests.prepare
 
     def run_lane(self, validate_failures=(), install_failures=(), converted=None, count=20, chitin=True,
@@ -4891,6 +4900,14 @@ class TypeScriptInstallFailureParserTests(unittest.TestCase):
 
 
 class TypeScriptInstallQuarantineTests(unittest.TestCase):
+    def test_disk_exhaustion_does_not_quarantine_a_mod_or_retry(self):
+        commands, report, error = self.run_lane([ts_install_log(5, message="ENOSPC: no space left on device, write")])
+        self.assertEqual(error, "install_failed")
+        self.assertEqual(report["quarantine"]["stopped"]["reason"], "disk_exhaustion")
+        self.assertFalse(report[ports.INSTALL_QUARANTINE_KEY])
+        self.assertFalse(self.restores)
+        self.assertFalse(any("retry" in stage for stage, _ in commands))
+
     prepare = ExecuteCommandTests.prepare
 
     def run_lane(self, install_failures=(), converted=None, max_fraction=None, restore_status="restored",
@@ -5367,6 +5384,15 @@ class BindDiagnosticTests(unittest.TestCase):
 
 
 class GuiInstallQuarantineTests(unittest.TestCase):
+    def test_disk_exhaustion_does_not_quarantine_a_mod_or_retry(self):
+        stages, _, report, error, _, recover = self.run_loop([
+            self.failure(error=f"Instruction {self.ALPHA_INSTRUCTION} failed (UnknownError); ENOSPC: no space left on device, write")])
+        self.assertEqual((error, stages), ("install_failed", ["gui"]))
+        self.assertEqual(report["quarantine"]["stopped"]["reason"], "disk_exhaustion")
+        self.assertFalse(report[ports.INSTALL_QUARANTINE_KEY])
+        recover.assert_not_called()
+        self.assertTrue((self.game / "partial.bin").exists(), "retain failed state for diagnostics")
+
     ALPHA = "10000000-0000-0000-0000-000000000011"
     BETA = "10000000-0000-0000-0000-000000000021"
     ALPHA_INSTRUCTION = "10000000-0000-0000-0000-000000000019"
@@ -5523,6 +5549,15 @@ class GuiInstallQuarantineTests(unittest.TestCase):
 
 
 class RustGuiInstallQuarantineTests(unittest.TestCase):
+    def test_disk_exhaustion_does_not_quarantine_a_mod_or_retry(self):
+        stages, _, report, error, recover = self.run_loop([self.stopped(
+            failed_component="Alpha", failed_step="1", worker_diagnostics={
+                "ocr_lines": ["Alpha / step 1 (Move): No space left on device (os error 28)"]})])
+        self.assertEqual((error, stages), ("install_failed", ["gui"]))
+        self.assertEqual(report["quarantine"]["stopped"]["reason"], "disk_exhaustion")
+        self.assertFalse(report[ports.INSTALL_QUARANTINE_KEY])
+        recover.assert_not_called()
+
     ALPHA = "10000000-0000-0000-0000-000000000011"
     BETA = "10000000-0000-0000-0000-000000000021"
 
