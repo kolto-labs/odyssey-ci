@@ -1,3 +1,9 @@
+# Step status guard: success() || failure() overrides implicit success() gating,
+# allowing eligible steps after success or failure; it is false when cancelled.
+# Existing input/platform/prerequisite predicates still apply. This guard does not
+# change workflow concurrency or aggregate failures; failure reporting is separate.
+# https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions
+# https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation
 name: CI
 
 # One workflow for game acquisition, the mod archive cache and every install lane.
@@ -67,9 +73,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        if: ${{ success() || failure() }}
         with:
           persist-credentials: false
       - name: Validate dispatch mode
+        if: ${{ success() || failure() }}
         env:
           SEED_ARCHIVES: ${{ inputs.seed_archives }}
           GAME_SEED_PROBE: ${{ inputs.game_seed_probe }}
@@ -79,6 +87,7 @@ jobs:
             exit 1
           fi
       - name: Run the tools/modsync-ci unit tests
+        if: ${{ success() || failure() }}
         run: |
           # manual.py resolves game paths with PyKotor; its tests need the same pinned version.
           python3 -m pip install --quiet "$(python3 -c 'import sys; sys.path.insert(0, "tools/modsync-ci"); import manual; print(manual.PYKOTOR_REQUIREMENT)')"
@@ -105,10 +114,12 @@ jobs:
       APP_ID: ${{ matrix.game == 'k1' && '32370' || '208580' }}
     steps:
       - uses: actions/checkout@v4
+        if: ${{ success() || failure() }}
         with:
           persist-credentials: false
 
       - name: Look up game cache
+        if: ${{ success() || failure() }}
         id: cache
         uses: actions/cache/restore@v4
         with:
@@ -121,13 +132,15 @@ jobs:
       # kept as an encrypted artifact (same CACHE_ENCRYPTION_KEY seal, uploaded in sealed parts; the repository is
       # public). A lookup or backup problem is a warning; only a game that no source can provide fails the job.
       - name: Look up game backup artifact
+        if: ${{ success() || failure() }}
         id: backup
         env:
           GH_TOKEN: ${{ github.token }}
         run: python tools/modsync-ci/game_backup.py status --game "$GAME"
 
       - name: Restore game cache for the backup artifact
-        if: steps.cache.outputs.cache-matched-key != '' && (steps.backup.outputs.state == 'missing' || steps.backup.outputs.state == 'stale')
+        id: backup_cache
+        if: ${{ (success() || failure()) && (steps.cache.outputs.cache-matched-key != '' && (steps.backup.outputs.state == 'missing' || steps.backup.outputs.state == 'stale')) }}
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/sealed/*.seal
@@ -136,7 +149,7 @@ jobs:
 
       - name: Restore game from backup artifact
         id: artifact
-        if: steps.cache.outputs.cache-matched-key == '' && steps.backup.outputs.artifact_id != ''
+        if: ${{ (success() || failure()) && (steps.cache.outputs.cache-matched-key == '' && steps.backup.outputs.artifact_id != '') }}
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
@@ -145,7 +158,7 @@ jobs:
 
       - name: Restore game from seed
         id: seed
-        if: steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true'
+        if: ${{ (success() || failure()) && (steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true') }}
         timeout-minutes: 30
         env:
           GAME_SEED_URL_K1: ${{ secrets.GAME_SEED_URL_K1 }}
@@ -157,13 +170,14 @@ jobs:
         run: python tools/modsync-ci/game_seed.py restore --game "$GAME" --game-dir "$RUNNER_TEMP/game"
 
       - name: Require a restored seed for the probe
-        if: inputs.game_seed_probe && steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true' && steps.seed.outputs.restored != 'true'
+        if: ${{ (success() || failure()) && (inputs.game_seed_probe && steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true' && steps.seed.outputs.restored != 'true') }}
         run: |
           echo "::error::$GAME seed was unavailable or could not be restored. Check the seed step above; repository secret names alone do not prove nonempty values. No Steam login was attempted."
           exit 1
 
       - name: Download game with SteamCMD
-        if: ${{ !inputs.game_seed_probe && steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true' && steps.seed.outputs.restored != 'true' }}
+        id: steam
+        if: ${{ (success() || failure()) && (!inputs.game_seed_probe && steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true' && steps.seed.outputs.restored != 'true') }}
         timeout-minutes: 45
         env:
           STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
@@ -234,7 +248,8 @@ jobs:
           fi
 
       - name: Seal game
-        if: steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true'
+        id: seal
+        if: ${{ (success() || failure()) && (steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true') && (((steps.seed.outcome == 'success' && steps.seed.outputs.restored == 'true') || steps.steam.outcome == 'success')) }}
         env:
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
           SOURCE: ${{ steps.seed.outputs.restored == 'true' && 'seed' || 'SteamCMD' }}
@@ -248,7 +263,7 @@ jobs:
             --game-dir "$RUNNER_TEMP/game" --seal "$RUNNER_TEMP/sealed/baseline.seal"
 
       - name: Save game cache
-        if: steps.cache.outputs.cache-matched-key == '' && env.CACHE_WRITER == 'true'
+        if: ${{ (success() || failure()) && (steps.cache.outputs.cache-matched-key == '' && env.CACHE_WRITER == 'true') && ((steps.seal.outcome == 'success' || (steps.artifact.outcome == 'success' && steps.artifact.outputs.restored == 'true'))) }}
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/sealed/*.seal
@@ -256,7 +271,7 @@ jobs:
 
       - name: Stage encrypted game backup
         id: stage
-        if: (steps.cache.outputs.cache-matched-key != '' && (steps.backup.outputs.state == 'missing' || steps.backup.outputs.state == 'stale')) || (steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true')
+        if: ${{ (success() || failure()) && ((steps.cache.outputs.cache-matched-key != '' && (steps.backup.outputs.state == 'missing' || steps.backup.outputs.state == 'stale')) || (steps.cache.outputs.cache-matched-key == '' && steps.artifact.outputs.restored != 'true')) && (((steps.backup_cache.outcome == 'success' && steps.backup_cache.outputs.cache-matched-key != '') || steps.seal.outcome == 'success')) }}
         continue-on-error: true
         env:
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
@@ -264,7 +279,7 @@ jobs:
 
       - name: Upload encrypted game backup
         id: backup_upload
-        if: steps.stage.outputs.staged == 'true'
+        if: ${{ (success() || failure()) && (steps.stage.outputs.staged == 'true') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -277,7 +292,7 @@ jobs:
       # The backup steps continue on error so the cache above is kept, but a needed backup that was not
       # written (K1 cannot be re-fetched headlessly) fails this job. The install lanes still run.
       - name: Fail when the needed game backup was not written
-        if: steps.stage.outcome != 'skipped' && (steps.stage.outputs.staged != 'true' || steps.backup_upload.outcome != 'success')
+        if: ${{ (success() || failure()) && (steps.stage.outcome != 'skipped' && (steps.stage.outputs.staged != 'true' || steps.backup_upload.outcome != 'success')) }}
         run: |
           echo "::error::the game-$GAME-sealed backup was needed but was not staged or uploaded; see the steps above."
           exit 1
@@ -302,23 +317,32 @@ jobs:
       archive_cache_key: ${{ steps.archive_key.outputs.key }}
     steps:
       - uses: actions/checkout@v4
+        id: archive_source
+        if: ${{ success() || failure() }}
         with:
           persist-credentials: false
       - name: Free disk space
+        id: archive_disk
+        if: ${{ success() || failure() }}
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - name: Restore mod archive cache
+        id: archive_restore
+        if: ${{ success() || failure() }}
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/mod-cache
           key: mod-archives-
           restore-keys: mod-archives-
       - name: Install archive tools
+        id: archive_tools
+        if: ${{ success() || failure() }}
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq 7zip 7zip-rar megatools libarchive-tools >/dev/null && { sudo apt-get install -y -qq unrar >/dev/null 2>&1 || echo "unrar unavailable; falling back to 7z/bsdtar"; }
           python -m pip install --quiet gdown
           python3 tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone"
       # Optional extra: keeps the R2 bucket current when its secrets exist. Never fails the run.
       - name: Refresh the R2 bucket (optional)
+        if: ${{ (success() || failure()) && (steps.archive_source.outcome == 'success' && steps.archive_disk.outcome == 'success' && steps.archive_restore.outcome == 'success' && steps.archive_tools.outcome == 'success') }}
         continue-on-error: true
         timeout-minutes: 40
         env:
@@ -336,6 +360,7 @@ jobs:
       # repository cache. GITHUB_TOKEN switches the artifact-store tier on; --emit-stage-manifest lists
       # the cached objects the store lacks or will soon expire, for the publish steps at the end.
       - name: Refresh the mod archive cache
+        if: ${{ (success() || failure()) && (steps.archive_source.outcome == 'success' && steps.archive_disk.outcome == 'success' && steps.archive_restore.outcome == 'success' && steps.archive_tools.outcome == 'success') }}
         id: refresh
         continue-on-error: true
         timeout-minutes: 60
@@ -366,7 +391,7 @@ jobs:
       # unchanged content gives an unchanged key and no new entry. Empty when there is no manifest.
       - name: Compute the archive cache key
         id: archive_key
-        if: always()
+        if: ${{ (success() || failure()) && (always()) }}
         run: |
           manifest="$RUNNER_TEMP/mod-cache/manifest.json"
           if [[ ! -f "$manifest" ]]; then
@@ -391,7 +416,7 @@ jobs:
           echo "key=mod-archives-$digest" >> "$GITHUB_OUTPUT"
       - name: Look up the archive cache entry
         id: archive_exists
-        if: always() && steps.archive_key.outputs.key != ''
+        if: ${{ (success() || failure()) && (always() && steps.archive_key.outputs.key != '') }}
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/mod-cache
@@ -402,7 +427,7 @@ jobs:
       # cache" at info level, which is not an error.
       - name: Save mod archive cache
         id: archive_save
-        if: always() && env.CACHE_WRITER == 'true' && steps.archive_key.outputs.key != '' && steps.archive_exists.outputs.cache-hit != 'true'
+        if: ${{ (success() || failure()) && (always() && env.CACHE_WRITER == 'true' && steps.archive_key.outputs.key != '' && steps.archive_exists.outputs.cache-hit != 'true') && (steps.archive_restore.outcome == 'success' && steps.refresh.outcome == 'success' && steps.archive_key.outcome == 'success') }}
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/mod-cache
@@ -411,7 +436,7 @@ jobs:
       # Only runs once the current key is confirmed present, and only touches mod-archives-* keys,
       # never game-* or steam-sealed-*.
       - name: Prune stale mod archive caches
-        if: always() && env.CACHE_WRITER == 'true' && steps.archive_key.outputs.key != '' && (steps.archive_save.outcome == 'success' || steps.archive_exists.outputs.cache-hit == 'true')
+        if: ${{ (success() || failure()) && (always() && env.CACHE_WRITER == 'true' && steps.archive_key.outputs.key != '' && (steps.archive_save.outcome == 'success' || steps.archive_exists.outputs.cache-hit == 'true')) && (steps.archive_restore.outcome == 'success' && steps.refresh.outcome == 'success' && steps.archive_key.outcome == 'success') }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -433,7 +458,7 @@ jobs:
       # The 3 GiB pack budget keeps the 2.5 GiB cache in one pack; the three upload slots are headroom.
       - name: Stage artifact store packs
         id: stage
-        if: ${{ always() && contains(fromJSON('["push","schedule","release","workflow_dispatch"]'), github.event_name) }}
+        if: ${{ (success() || failure()) && (always() && contains(fromJSON('["push","schedule","release","workflow_dispatch"]'), github.event_name)) && (steps.refresh.outcome == 'success') }}
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -467,7 +492,7 @@ jobs:
           PY
       - name: Upload artifact store pack 1
         id: up1
-        if: ${{ always() && steps.stage.outputs.pack1 != '' }}
+        if: ${{ (success() || failure()) && (always() && steps.stage.outputs.pack1 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -476,7 +501,7 @@ jobs:
           if-exists: skip
       - name: Upload artifact store pack 2
         id: up2
-        if: ${{ always() && steps.stage.outputs.pack2 != '' }}
+        if: ${{ (success() || failure()) && (always() && steps.stage.outputs.pack2 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -485,7 +510,7 @@ jobs:
           if-exists: skip
       - name: Upload artifact store pack 3
         id: up3
-        if: ${{ always() && steps.stage.outputs.pack3 != '' }}
+        if: ${{ (success() || failure()) && (always() && steps.stage.outputs.pack3 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -496,7 +521,7 @@ jobs:
       # reconciled away when the index is read, so the store never serves a missing pack.
       - name: Upload artifact store index
         id: upindex
-        if: ${{ always() && steps.stage.outputs.index != '' && (steps.up1.outcome == 'success' || steps.up2.outcome == 'success' || steps.up3.outcome == 'success') }}
+        if: ${{ (success() || failure()) && (always() && steps.stage.outputs.index != '' && (steps.up1.outcome == 'success' || steps.up2.outcome == 'success' || steps.up3.outcome == 'success')) && (steps.stage.outcome == 'success' && (steps.stage.outputs.pack1 == '' || (steps.up1.outcome == 'success' && steps.up1.outputs.artifact-id != '')) && (steps.stage.outputs.pack2 == '' || (steps.up2.outcome == 'success' && steps.up2.outputs.artifact-id != '')) && (steps.stage.outputs.pack3 == '' || (steps.up3.outcome == 'success' && steps.up3.outputs.artifact-id != ''))) }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -504,14 +529,14 @@ jobs:
           directory: ${{ runner.temp }}/artstore-pack/index
           if-exists: skip
       - name: Report artifact store publish problems
-        if: ${{ always() && (steps.stage.outcome == 'failure' || steps.up1.outcome == 'failure' || steps.up2.outcome == 'failure' || steps.up3.outcome == 'failure' || steps.upindex.outcome == 'failure') }}
+        if: ${{ (success() || failure()) && (always() && (steps.stage.outcome == 'failure' || steps.up1.outcome == 'failure' || steps.up2.outcome == 'failure' || steps.up3.outcome == 'failure' || steps.upindex.outcome == 'failure')) }}
         run: echo "::error::Artifact store publish failed; the install lanes fall back to the other archive sources."
       # Read-path proof from a real runner: fetch the smallest blob just published (or, when nothing was
       # published this run, the smallest blob in `artstore.py list`) back through the store and compare its
       # SHA-256. A failure fails the (non-blocking) job in the last step.
       - name: Verify artifact store round trip
         id: roundtrip
-        if: ${{ always() && contains(fromJSON('["push","schedule","release","workflow_dispatch"]'), github.event_name) }}
+        if: ${{ (success() || failure()) && (always() && contains(fromJSON('["push","schedule","release","workflow_dispatch"]'), github.event_name)) }}
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -610,7 +635,7 @@ jobs:
       # The refresh, publish and round-trip steps continue on error so the cache is still saved and the rest
       # still runs. The job is non-blocking (job-level continue-on-error) but must still show red when one failed.
       - name: Fail when the refresh, publish or round trip failed
-        if: ${{ always() && (steps.refresh.outcome == 'failure' || steps.stage.outcome == 'failure' || steps.up1.outcome == 'failure' || steps.up2.outcome == 'failure' || steps.up3.outcome == 'failure' || steps.upindex.outcome == 'failure' || steps.roundtrip.outcome == 'failure') }}
+        if: ${{ (success() || failure()) && (always() && (steps.refresh.outcome == 'failure' || steps.stage.outcome == 'failure' || steps.up1.outcome == 'failure' || steps.up2.outcome == 'failure' || steps.up3.outcome == 'failure' || steps.upindex.outcome == 'failure' || steps.roundtrip.outcome == 'failure')) }}
         run: |
           echo "::error::mods: the archive cache refresh, artifact store publish or round trip failed; see the failed step above."
           exit 1
@@ -633,16 +658,23 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@v4
+        id: renewal_source
+        if: ${{ success() || failure() }}
         with:
           persist-credentials: false
       - name: Free disk space
+        id: renewal_disk
+        if: ${{ success() || failure() }}
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - name: Plan the refresh
+        id: plan
+        if: ${{ (success() || failure()) && (steps.renewal_source.outcome == 'success' && steps.renewal_disk.outcome == 'success') }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python tools/modsync-ci/artstore.py refresh-plan --within-days 21 > "$RUNNER_TEMP/refresh-plan.txt"
       # At most 8 GiB per run; what is left stays in the plan for the next scheduled run.
       - name: Fetch the blobs that are about to expire
+        if: ${{ (success() || failure()) && (steps.plan.outcome == 'success') }}
         id: fetch
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -683,7 +715,7 @@ jobs:
           echo "failed=$failed" >> "$GITHUB_OUTPUT"
       - name: Stage artifact store packs
         id: stage
-        if: ${{ steps.fetch.outputs.count != '0' }}
+        if: ${{ (success() || failure()) && (steps.fetch.outputs.count != '0') && (steps.fetch.outcome == 'success' && steps.fetch.outputs.failed == '0' && steps.fetch.outputs.count != '' && steps.fetch.outputs.count > 0) }}
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -708,7 +740,7 @@ jobs:
           PY
       - name: Upload artifact store pack 1
         id: up1
-        if: ${{ steps.stage.outputs.pack1 != '' }}
+        if: ${{ (success() || failure()) && (steps.stage.outputs.pack1 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -717,7 +749,7 @@ jobs:
           if-exists: skip
       - name: Upload artifact store pack 2
         id: up2
-        if: ${{ steps.stage.outputs.pack2 != '' }}
+        if: ${{ (success() || failure()) && (steps.stage.outputs.pack2 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -726,7 +758,7 @@ jobs:
           if-exists: skip
       - name: Upload artifact store pack 3
         id: up3
-        if: ${{ steps.stage.outputs.pack3 != '' }}
+        if: ${{ (success() || failure()) && (steps.stage.outputs.pack3 != '') && (steps.stage.outcome == 'success') }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -735,7 +767,7 @@ jobs:
           if-exists: skip
       - name: Upload artifact store index
         id: upindex
-        if: ${{ steps.stage.outputs.index != '' && (steps.up1.outcome == 'success' || steps.up2.outcome == 'success' || steps.up3.outcome == 'success') }}
+        if: ${{ (success() || failure()) && (steps.stage.outputs.index != '' && (steps.up1.outcome == 'success' || steps.up2.outcome == 'success' || steps.up3.outcome == 'success')) && (steps.stage.outcome == 'success' && (steps.stage.outputs.pack1 == '' || (steps.up1.outcome == 'success' && steps.up1.outputs.artifact-id != '')) && (steps.stage.outputs.pack2 == '' || (steps.up2.outcome == 'success' && steps.up2.outputs.artifact-id != '')) && (steps.stage.outputs.pack3 == '' || (steps.up3.outcome == 'success' && steps.up3.outputs.artifact-id != ''))) }}
         continue-on-error: true
         uses: ./.github/actions/artstore-upload
         with:
@@ -745,7 +777,7 @@ jobs:
       # Staging and uploads continue on error only so the prune below still runs; the job itself fails here,
       # because a refresh that renewed nothing it planned to renew has not done its job.
       - name: Fail when expiring blobs were not renewed
-        if: ${{ steps.fetch.outputs.failed != '0' || steps.stage.outcome == 'failure' || steps.up1.outcome == 'failure' || steps.up2.outcome == 'failure' || steps.up3.outcome == 'failure' || steps.upindex.outcome == 'failure' || (steps.stage.outputs.index != '' && steps.upindex.outcome != 'success') }}
+        if: ${{ (success() || failure()) && (steps.fetch.outputs.failed != '0' || steps.stage.outcome == 'failure' || steps.up1.outcome == 'failure' || steps.up2.outcome == 'failure' || steps.up3.outcome == 'failure' || steps.upindex.outcome == 'failure' || (steps.stage.outputs.index != '' && steps.upindex.outcome != 'success')) }}
         env:
           FAILED: ${{ steps.fetch.outputs.failed }}
           PLANNED: ${{ steps.fetch.outputs.planned }}
@@ -753,7 +785,7 @@ jobs:
           echo "::error::Artifact store refresh incomplete: $FAILED of $PLANNED planned blob(s) could not be fetched, or staging/upload failed; expiring blobs were not all renewed this run."
           exit 1
       - name: Prune expired and superseded artifacts
-        if: ${{ !cancelled() }}
+        if: ${{ (success() || failure()) && (!cancelled()) && (steps.plan.outcome == 'success' && steps.fetch.outcome == 'success' && steps.fetch.outputs.failed == '0' && steps.stage.outcome == 'success' && steps.upindex.outcome == 'success' && steps.upindex.outputs.artifact-id != '' && (steps.stage.outputs.pack1 == '' || (steps.up1.outcome == 'success' && steps.up1.outputs.artifact-id != '')) && (steps.stage.outputs.pack2 == '' || (steps.up2.outcome == 'success' && steps.up2.outputs.artifact-id != '')) && (steps.stage.outputs.pack3 == '' || (steps.up3.outcome == 'success' && steps.up3.outputs.artifact-id != ''))) }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python tools/modsync-ci/artstore.py prune --apply
@@ -773,18 +805,25 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
+        id: seed_source
+        if: ${{ success() || failure() }}
         with:
           persist-credentials: false
       - name: Free disk space
+        id: seed_disk
+        if: ${{ success() || failure() }}
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h "$RUNNER_TEMP" | tail -n 1
       - name: Install archive tools
+        id: seed_tools
+        if: ${{ success() || failure() }}
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq 7zip 7zip-rar megatools libarchive-tools >/dev/null && { sudo apt-get install -y -qq unrar >/dev/null 2>&1 || echo "unrar unavailable; falling back to 7z/bsdtar"; }
           python -m pip install --quiet gdown
           python3 tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone"
       - name: Seed archives from staging (verified against the pins)
+        if: ${{ (success() || failure()) && (steps.seed_source.outcome == 'success' && steps.seed_disk.outcome == 'success' && steps.seed_tools.outcome == 'success') }}
         env:
           SEED_STAGING_RCLONE_CONF_B64: ${{ secrets.SEED_STAGING_RCLONE_CONF_B64 }}
           SEED_DRY_RUN: ${{ inputs.seed_dry_run }}
@@ -802,7 +841,7 @@ jobs:
           if [[ "$SEED_DRY_RUN" == "true" ]]; then options+=(--dry-run); fi
           python tools/modsync-ci/seed_archives.py "${options[@]}"
       - name: Verify every pin restores with the read-only credentials
-        if: ${{ !inputs.seed_dry_run }}
+        if: ${{ (success() || failure()) && (!inputs.seed_dry_run) }}
         env:
           RCLONE_CONFIG_MODCACHE_TYPE: s3
           RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
@@ -820,10 +859,12 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        if: ${{ success() || failure() }}
         with:
           persist-credentials: false
 
       - name: Resolve ModSync source repository
+        if: ${{ success() || failure() }}
         id: source
         env:
           RUST_REPOSITORY: ${{ vars.MODSYNC_RS_REPOSITORY }}
@@ -841,6 +882,7 @@ jobs:
           echo "repository=$RUST_REPOSITORY" >> "$GITHUB_OUTPUT"
 
       - name: Check out ModSync (rust)
+        if: ${{ success() || failure() }}
         uses: actions/checkout@v4
         with:
           repository: ${{ steps.source.outputs.repository }}
@@ -849,6 +891,7 @@ jobs:
           persist-credentials: false
 
       - name: Let cargo fetch private git dependencies
+        if: ${{ success() || failure() }}
         env:
           SOURCE_TOKEN: ${{ secrets.MODSYNC_SOURCE_TOKEN }}
         run: |
@@ -858,13 +901,16 @@ jobs:
           echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
 
       - name: Install build tools
+        if: ${{ success() || failure() }}
         run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libssl-dev >/dev/null
 
       - name: Build modsync
+        if: ${{ success() || failure() }}
         working-directory: .modsync-source
         run: cargo build --locked --bin modsync
 
       - name: Transfer a random archive between two peers on loopback
+        if: ${{ success() || failure() }}
         run: python3 tools/modsync-ci/p2p_loopback.py --binary .modsync-source/target/debug/modsync
 
   install:
@@ -889,11 +935,12 @@ jobs:
       GAME: ${{ matrix.game }}
     steps:
       - uses: actions/checkout@v4
+        if: ${{ success() || failure() }}
         with:
           persist-credentials: false
 
       - name: Require the reviewed TypeScript manifest
-        if: matrix.implementation == 'typescript'
+        if: ${{ (success() || failure()) && (matrix.implementation == 'typescript') }}
         run: |
           review="ci/${GAME}-typescript-review.json"
           if [[ ! -f "$review" ]]; then
@@ -908,6 +955,7 @@ jobs:
           fi
 
       - name: Resolve ModSync source repository
+        if: ${{ success() || failure() }}
         id: source
         env:
           IMPLEMENTATION: ${{ matrix.implementation }}
@@ -928,6 +976,7 @@ jobs:
           echo "repository=$repository" >> "$GITHUB_OUTPUT"
 
       - name: Check out ModSync (${{ matrix.implementation }})
+        if: ${{ success() || failure() }}
         uses: actions/checkout@v4
         with:
           repository: ${{ steps.source.outputs.repository }}
@@ -938,14 +987,14 @@ jobs:
 
       - name: Restore the NSS script compiler cache
         id: nsscomp
-        if: matrix.implementation == 'typescript'
+        if: ${{ (success() || failure()) && (matrix.implementation == 'typescript') }}
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/nsscomp
           key: nsscomp-${{ runner.os }}-${{ env.NSSCOMP_REV }}
 
       - name: Let cargo fetch private git dependencies
-        if: matrix.implementation == 'rust' || steps.nsscomp.outputs.cache-hit != 'true'
+        if: ${{ (success() || failure()) && (matrix.implementation == 'rust' || steps.nsscomp.outputs.cache-hit != 'true') }}
         env:
           SOURCE_TOKEN: ${{ secrets.MODSYNC_SOURCE_TOKEN }}
         run: |
@@ -955,7 +1004,8 @@ jobs:
           echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
 
       - name: Provide the NSS script compiler
-        if: matrix.implementation == 'typescript'
+        id: provide_nsscomp
+        if: ${{ (success() || failure()) && (matrix.implementation == 'typescript') }}
         env:
           CACHE_HIT: ${{ steps.nsscomp.outputs.cache-hit }}
           SOURCE_TOKEN: ${{ secrets.MODSYNC_SOURCE_TOKEN }}
@@ -977,13 +1027,14 @@ jobs:
           echo "MODSYNC_NSS_GAME=$([[ "$GAME" == k1 ]] && echo 1 || echo 2)" >> "$GITHUB_ENV"
 
       - name: Save the NSS script compiler cache
-        if: matrix.implementation == 'typescript' && steps.nsscomp.outputs.cache-hit != 'true' && env.CACHE_WRITER == 'true'
+        if: ${{ (success() || failure()) && (matrix.implementation == 'typescript' && steps.nsscomp.outputs.cache-hit != 'true' && env.CACHE_WRITER == 'true') && (steps.provide_nsscomp.outcome == 'success') }}
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/nsscomp
           key: ${{ steps.nsscomp.outputs.cache-primary-key }}
 
       - name: Install tools and free disk space
+        if: ${{ success() || failure() }}
         run: |
           # The k1 TypeScript CLI lane ran out of disk (ENOSPC) extracting Cutscenes Rescaled
           # (run 39445750831); remove the large preinstalled toolchains no lane uses.
@@ -999,24 +1050,25 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq "${packages[@]}" >/dev/null
 
       - uses: actions/setup-node@v4
-        if: matrix.implementation == 'typescript'
+        if: ${{ (success() || failure()) && (matrix.implementation == 'typescript') }}
         with:
           node-version: '22'
       - name: Install ModSync.ts dependencies
-        if: matrix.implementation == 'typescript'
+        if: ${{ (success() || failure()) && (matrix.implementation == 'typescript') }}
         working-directory: .modsync-source
         run: |
           corepack enable
           corepack pnpm install --frozen-lockfile
           if [[ '${{ matrix.mode }}' == gui ]]; then corepack pnpm exec playwright install --with-deps chromium; fi
       - name: Install GUI driver
-        if: matrix.mode == 'gui'
+        if: ${{ (success() || failure()) && (matrix.mode == 'gui') }}
         run: |
           python -m pip install --quiet PyAutoGUI==0.9.54 pytesseract==0.3.13 Pillow==11.3.0
           python -c 'import sys, tkinter; print("GUI driver interpreter:", sys.executable, "tk", tkinter.TkVersion)' \
             || { echo "::error::tkinter is not importable by the interpreter that runs gui_rust.py (PyAutoGUI/MouseInfo needs it); python3-tk must match this python."; exit 1; }
 
       - name: Restore game cache
+        if: ${{ success() || failure() }}
         id: game_cache
         uses: actions/cache/restore@v4
         with:
@@ -1026,25 +1078,26 @@ jobs:
           fail-on-cache-miss: ${{ env.CACHE_WRITER == 'true' }}
       - name: Look up game backup artifact
         id: game_backup
-        if: steps.game_cache.outputs.cache-matched-key == ''
+        if: ${{ (success() || failure()) && (steps.game_cache.outputs.cache-matched-key == '') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: python tools/modsync-ci/game_backup.py status --game "$GAME"
       - name: Restore game from backup artifact
         id: game_artifact
-        if: steps.game_cache.outputs.cache-matched-key == '' && steps.game_backup.outputs.artifact_id != ''
+        if: ${{ (success() || failure()) && (steps.game_cache.outputs.cache-matched-key == '' && steps.game_backup.outputs.artifact_id != '') }}
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
           ARTIFACT_ID: ${{ steps.game_backup.outputs.artifact_id }}
         run: python tools/modsync-ci/game_backup.py fetch --game "$GAME" --artifact-id "$ARTIFACT_ID" --seal-dir "$RUNNER_TEMP/sealed"
       - name: Require the game
-        if: steps.game_cache.outputs.cache-matched-key == '' && steps.game_artifact.outputs.restored != 'true'
+        if: ${{ (success() || failure()) && (steps.game_cache.outputs.cache-matched-key == '' && steps.game_artifact.outputs.restored != 'true') }}
         run: echo "::error::$GAME has no game cache on this ref and no usable game-$GAME-sealed backup artifact; run the game job from main or a manual dispatch to save it (docs/ci.md, Actions cache size and eviction)"; exit 1
       - name: Explain a game cache miss
-        if: failure() && steps.game_cache.outcome == 'failure'
+        if: ${{ (success() || failure()) && (failure() && steps.game_cache.outcome == 'failure') }}
         run: echo "::error::game cache evicted — re-run the game job (then this lane); see docs/ci.md, Actions cache size and eviction"
       - name: Unpack game
+        if: ${{ success() || failure() }}
         env:
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
         run: |
@@ -1053,24 +1106,29 @@ jobs:
           # Nothing later in this job reads the sealed game; free its space for the install.
           rm -rf -- "$RUNNER_TEMP/sealed"
       - name: Normalize game case
+        if: ${{ success() || failure() }}
         run: |
           python tools/modsync-ci/game_cache.py normalize-case --game "$GAME" --game-dir "$RUNNER_TEMP/game" \
             --label "${{ matrix.implementation }} ${{ matrix.mode }}"
       - name: Game inventory
+        if: ${{ success() || failure() }}
         run: |
           python tools/modsync-ci/game_cache.py inventory --game "$GAME" --game-dir "$RUNNER_TEMP/game" \
             --label "${{ matrix.implementation }} ${{ matrix.mode }}"
       - name: Install archive tools
+        if: ${{ success() || failure() }}
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq 7zip 7zip-rar megatools libarchive-tools >/dev/null && { sudo apt-get install -y -qq unrar >/dev/null 2>&1 || echo "unrar unavailable; falling back to 7z/bsdtar"; }
           python -m pip install --quiet gdown
       - name: Restore mod archive cache
+        if: ${{ success() || failure() }}
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/mod-cache
           key: ${{ needs.mods.outputs.archive_cache_key || 'mod-archives-' }}
           restore-keys: mod-archives-
       - name: Restore required mod archives
+        if: ${{ success() || failure() }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
@@ -1109,13 +1167,14 @@ jobs:
           rm -rf -- "$RUNNER_TEMP/mod-cache"
 
       - name: Install Wine for legacy patchers and Execute
-        if: matrix.implementation == 'typescript'
+        if: ${{ (success() || failure()) && (matrix.implementation == 'typescript') }}
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends wine wine64 wine32:i386 >/dev/null
 
       - name: Install the full guide
+        if: ${{ success() || failure() }}
         env:
           REVIEW: ci/${{ matrix.game }}-${{ matrix.implementation }}-review.json
           WINEDEBUG: '-all'
@@ -1132,7 +1191,7 @@ jobs:
             --work-dir "$RUNNER_TEMP/work" --report "$RUNNER_TEMP/report.json" "${review[@]}"
 
       - name: Seal lane diagnostics
-        if: always()
+        if: ${{ (success() || failure()) && (always()) }}
         env:
           DIAGNOSTICS_ENCRYPTION_KEY: ${{ secrets.DIAGNOSTICS_ENCRYPTION_KEY }}
         run: |
@@ -1148,7 +1207,7 @@ jobs:
           CACHE_ENCRYPTION_KEY="$DIAGNOSTICS_ENCRYPTION_KEY" python tools/modsync-ci/seal.py seal \
             --source "$RUNNER_TEMP/diagnostics-plain" --destination "$RUNNER_TEMP/diagnostics/lane-diagnostics.seal"
       - name: Upload sealed lane diagnostics
-        if: always()
+        if: ${{ (success() || failure()) && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: ports-diagnostics-${{ matrix.game }}-${{ matrix.implementation }}-${{ matrix.mode }}
@@ -1180,9 +1239,11 @@ jobs:
       WINEDLLOVERRIDES: 'mscoree,mshtml='
     steps:
       - uses: actions/checkout@v4
+        if: ${{ success() || failure() }}
         with:
           persist-credentials: false
       - name: Require the reviewed manual plan
+        if: ${{ success() || failure() }}
         id: plan
         run: |
           if [[ -f "$PLAN" ]]; then
@@ -1195,10 +1256,10 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Draft the manual plan for review
-        if: steps.plan.outputs.present == 'false'
+        if: ${{ (success() || failure()) && (steps.plan.outputs.present == 'false') }}
         run: python3 tools/modsync-ci/draft_plan.py --game "$GAME" --out-dir "$RUNNER_TEMP/drafts"
       - name: Upload manual plan drafts
-        if: ${{ !cancelled() && steps.plan.outputs.present == 'false' }}
+        if: ${{ (success() || failure()) && (!cancelled() && steps.plan.outputs.present == 'false') }}
         uses: actions/upload-artifact@v4
         with:
           name: manual-drafts-${{ matrix.game }}
@@ -1206,6 +1267,7 @@ jobs:
           retention-days: 14
           if-no-files-found: error
       - name: Install Wine and tools, free disk space
+        if: ${{ success() || failure() }}
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           sudo dpkg --add-architecture i386
@@ -1213,6 +1275,7 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends wine wine64 wine32:i386 xvfb xauth xdotool imagemagick p7zip-full >/dev/null
           python3 tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone"
       - name: Restore game cache
+        if: ${{ success() || failure() }}
         id: game_cache
         uses: actions/cache/restore@v4
         with:
@@ -1222,44 +1285,49 @@ jobs:
           fail-on-cache-miss: ${{ env.CACHE_WRITER == 'true' }}
       - name: Look up game backup artifact
         id: game_backup
-        if: steps.game_cache.outputs.cache-matched-key == ''
+        if: ${{ (success() || failure()) && (steps.game_cache.outputs.cache-matched-key == '') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: python tools/modsync-ci/game_backup.py status --game "$GAME"
       - name: Restore game from backup artifact
         id: game_artifact
-        if: steps.game_cache.outputs.cache-matched-key == '' && steps.game_backup.outputs.artifact_id != ''
+        if: ${{ (success() || failure()) && (steps.game_cache.outputs.cache-matched-key == '' && steps.game_backup.outputs.artifact_id != '') }}
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
           ARTIFACT_ID: ${{ steps.game_backup.outputs.artifact_id }}
         run: python tools/modsync-ci/game_backup.py fetch --game "$GAME" --artifact-id "$ARTIFACT_ID" --seal-dir "$RUNNER_TEMP/sealed"
       - name: Require the game
-        if: steps.game_cache.outputs.cache-matched-key == '' && steps.game_artifact.outputs.restored != 'true'
+        if: ${{ (success() || failure()) && (steps.game_cache.outputs.cache-matched-key == '' && steps.game_artifact.outputs.restored != 'true') }}
         run: echo "::error::$GAME has no game cache on this ref and no usable game-$GAME-sealed backup artifact; run the game job from main or a manual dispatch to save it (docs/ci.md, Actions cache size and eviction)"; exit 1
       - name: Explain a game cache miss
-        if: failure() && steps.game_cache.outcome == 'failure'
+        if: ${{ (success() || failure()) && (failure() && steps.game_cache.outcome == 'failure') }}
         run: echo "::error::game cache evicted — re-run the game job (then this lane); see docs/ci.md, Actions cache size and eviction"
       - name: Unpack game
+        if: ${{ success() || failure() }}
         env:
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
         run: |
           python tools/modsync-ci/game_cache.py unpack --game "$GAME" \
             --game-dir "$RUNNER_TEMP/game" --seal "$RUNNER_TEMP/sealed/baseline.seal"
       - name: Game inventory
+        if: ${{ success() || failure() }}
         run: |
           python tools/modsync-ci/game_cache.py inventory --game "$GAME" --game-dir "$RUNNER_TEMP/game" --label manual
       - name: Install archive tools
+        if: ${{ success() || failure() }}
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq 7zip 7zip-rar megatools libarchive-tools >/dev/null && { sudo apt-get install -y -qq unrar >/dev/null 2>&1 || echo "unrar unavailable; falling back to 7z/bsdtar"; }
           python -m pip install --quiet gdown
       - name: Restore mod archive cache
+        if: ${{ success() || failure() }}
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/mod-cache
           key: ${{ needs.mods.outputs.archive_cache_key || 'mod-archives-' }}
           restore-keys: mod-archives-
       - name: Restore required mod archives
+        if: ${{ success() || failure() }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
@@ -1290,17 +1358,18 @@ jobs:
       # Evidence for authoring and checking the plan: archive and member hashes, shipped patchers and
       # their configuration. Mod metadata only; no game files.
       - name: Inventory the restored archives
+        if: ${{ success() || failure() }}
         run: |
           python tools/modsync-ci/manual_inventory.py --archives "$RUNNER_TEMP/archives" \
             --archive-map "$RUNNER_TEMP/evidence/archive-map.json" --out "$RUNNER_TEMP/evidence/inventory.json"
       - name: Probe the original patchers under Wine
-        if: steps.plan.outputs.present == 'false'
+        if: ${{ (success() || failure()) && (steps.plan.outputs.present == 'false') }}
         run: |
           xvfb-run -a -s "-screen 0 1280x1024x24" python tools/modsync-ci/manual_probe.py \
             --inventory "$RUNNER_TEMP/evidence/inventory.json" --archives "$RUNNER_TEMP/archives" \
             --out "$RUNNER_TEMP/evidence/probe"
       - name: Upload manual plan evidence
-        if: always()
+        if: ${{ (success() || failure()) && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: manual-evidence-${{ matrix.game }}
@@ -1308,10 +1377,10 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
       - name: Fail without a reviewed plan
-        if: steps.plan.outputs.present == 'false'
+        if: ${{ (success() || failure()) && (steps.plan.outputs.present == 'false') }}
         run: echo "::error title=manual lane installed nothing::$PLAN is missing. The manual lane needs a reviewed, Wine-executed plan; a draft is attached as manual-drafts-$GAME and the archive evidence as manual-evidence-$GAME."; exit 1
       - name: Install the full guide manually with the original patchers
-        if: steps.plan.outputs.present == 'true'
+        if: ${{ (success() || failure()) && (steps.plan.outputs.present == 'true') }}
         run: |
           # manual.py resolves game paths case-insensitively with PyKotor (PYKOTOR_REQUIREMENT).
           python -m pip install --quiet "$(python -c 'import sys; sys.path.insert(0, "tools/modsync-ci"); import manual; print(manual.PYKOTOR_REQUIREMENT)')"
@@ -1320,7 +1389,7 @@ jobs:
             --archives "$RUNNER_TEMP/archives" --work-dir "$RUNNER_TEMP/work" \
             --report "$RUNNER_TEMP/report.json"
       - name: Upload manual lane report
-        if: always()
+        if: ${{ (success() || failure()) && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: manual-report-${{ matrix.game }}
@@ -1328,7 +1397,7 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
       - name: Collect manual lane step diagnostics
-        if: always() && steps.plan.outputs.present == 'true'
+        if: ${{ (success() || failure()) && (always() && steps.plan.outputs.present == 'true') }}
         run: |
           # manual.py keeps per step work/step-NNNN/: operations.log (operations, patcher output,
           # [gui_patcher] window names), gui-failure-N.png screenshots and installer-log-N.* (the
@@ -1347,7 +1416,7 @@ jobs:
           done
           du -sh "$out" || true
       - name: Upload manual lane step diagnostics
-        if: always() && steps.plan.outputs.present == 'true'
+        if: ${{ (success() || failure()) && (always() && steps.plan.outputs.present == 'true') }}
         uses: actions/upload-artifact@v4
         with:
           name: manual-diagnostics-${{ matrix.game }}

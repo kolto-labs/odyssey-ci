@@ -1,3 +1,9 @@
+# Step status guard: success() || failure() overrides implicit success() gating,
+# allowing eligible steps after success or failure; it is false when cancelled.
+# Existing input/platform/prerequisite predicates still apply. This guard does not
+# change workflow concurrency or aggregate failures; failure reporting is separate.
+# https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions
+# https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation
 name: Full build lane (reusable)
 on:
   workflow_call:
@@ -21,9 +27,13 @@ jobs:
     timeout-minutes: 360
     steps:
       - name: Checkout public controller
+        id: controller_source
+        if: ${{ success() || failure() }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with: {persist-credentials: false}
       - name: Validate private lane contract
+        id: lane_contract
+        if: ${{ success() || failure() }}
         shell: python
         env:
           CONFIG: ${{ secrets.FULL_BUILD_CONFIG }}
@@ -48,11 +58,14 @@ jobs:
               sys.exit('Private build configuration does not match the selected game.')
           print('Private full-build contract accepted; game inputs remain on the trusted runner.')
       - name: Install Python runtime
+        id: lane_python
+        if: ${{ success() || failure() }}
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with: {python-version: '3.12'}
       # `run`, not `prepare`: prepare only clones the baseline and installs nothing, so a green lane would
       # prove nothing. In manual mode `run` fails on purpose (a human must install), never passes empty.
       - name: Run the full.md lane
+        if: ${{ (success() || failure()) && steps.controller_source.outcome == 'success' && steps.lane_contract.outcome == 'success' && steps.lane_python.outcome == 'success' }}
         shell: python
         env:
           CONFIG: ${{ secrets.FULL_BUILD_CONFIG }}
@@ -66,7 +79,7 @@ jobs:
           if completed.returncode:
               sys.exit(completed.returncode)
       - name: Upload encrypted receipt only
-        if: always()
+        if: ${{ (success() || failure()) && (always()) }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: full-build-receipt-${{ inputs.game }}-${{ inputs.mode }}-${{ inputs.platform }}-${{ inputs.implementation }}-${{ github.run_id }}
