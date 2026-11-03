@@ -1,5 +1,15 @@
 # CI
 
+> **Active routes:** Rust CLI, Rust GUI, TypeScript CLI, and TypeScript GUI (each for K1/K2).
+> **Legacy JSON reference is disabled:** the retained `manual` job cannot execute,
+> and the standalone `manual-probe.yml` has no push trigger and a disabled job.
+> Its plans, executor and unit tests remain for later use. Skipping this route is not
+> evidence of a passing manual reference. The intended AI-driven manual route is not implemented.
+> Historical manual-route descriptions below describe retained code, not an active CI lane.
+> The separate private-CI full-build controller requires a named human's attestation;
+> it neither invokes this JSON executor nor implements an AI-driven manual route.
+
+
 Game acquisition, the archive cache and every install lane run from one workflow,
 `.github/workflows/ci.yml`. The game cache is refilled from Steam on a miss. Mod
 archives come from a chain of sources (see [Mod archive sources](#mod-archive-sources));
@@ -50,7 +60,7 @@ inspect the seed step's missing-name diagnostics before retrying Steam.
 
 ```
 game (k1, k2) ──┬──> install (k1|k2 × rust|typescript × cli|gui)   8 jobs
-mods ───────────┴──> manual (k1|k2)                                2 jobs
+mods ───────────┴──> Legacy JSON reference (k1|k2)                 disabled
 p2p-loopback                                                       1 job, standalone
 tools                                                              1 job, standalone
 mods ───> artstore refresh                                         schedule / dispatch only
@@ -352,7 +362,7 @@ any GUI.
 **ModSync.ts and P2P:** ModSync.ts has no P2P implementation, so no job covers it
 and the `typescript` lanes make no P2P claim.
 
-**`manual`** — Installs the same guide step by step with each mod's original
+**`manual` / Legacy JSON reference (disabled)** — Retained code installs the same guide step by step with each mod's original
 patcher under Wine, from a human-reviewed plan at `ci/<game>-manual-plan.json`.
 While the plan is missing the job fails: the `Require the reviewed manual plan` step
 writes a step summary ("manual lane failed: no reviewed plan, nothing installed; draft

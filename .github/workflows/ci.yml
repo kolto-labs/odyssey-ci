@@ -504,10 +504,11 @@ jobs:
           if-no-files-found: ignore
 
   manual:
-    name: manual (${{ matrix.game }})
+    name: Legacy JSON reference (${{ matrix.game }})
     needs: [game, mods]
-    # Run per game even if the other game failed; unpacking fails if this game is missing.
-    if: ${{ !cancelled() && !inputs.game_seed_probe && needs.game.result != 'skipped' }}
+    # Disabled by request: retain the reviewed plans and executor, but do not run this legacy route.
+    # The intended AI-driven manual route does not exist yet.
+    if: ${{ false && (!cancelled() && !inputs.game_seed_probe && needs.game.result != 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     # A job-level block replaces the top-level one, so contents: read is repeated. actions: read lets the

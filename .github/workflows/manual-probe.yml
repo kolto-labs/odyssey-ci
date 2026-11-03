@@ -4,7 +4,7 @@
 # change workflow concurrency or aggregate failures; failure reporting is separate.
 # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions
 # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation
-name: Manual lane patcher probe
+name: Legacy JSON reference probe (disabled)
 
 # Evidence for the reviewed manual-lane plans, executed by manual.py itself. probe_plan.py
 # derives one small probe plan per selected step from ci/<game>-manual-plan.json (that step
@@ -15,17 +15,9 @@ name: Manual lane patcher probe
 # the plans, TSLPatcher namespace options, ConfirmMessage, LookupGameFolder=1, PlaintextLog=1
 # and the K2 TSLRCM installer. Read-only: restores caches like the manual job in ci.yml but
 # never saves one; uploads reports, step logs, screenshots and patcher logs (no game files).
-# workflow_dispatch only works once this file is on the default branch; until then a push
-# to a branch that changes the probe or the plans runs it for both games.
+# Disabled legacy JSON route: no automatic trigger and an unconditional job-level stop.
+# Retain dispatch metadata and probe code for a future explicitly authorized re-enable.
 on:
-  push:
-    branches-ignore: [main]
-    paths:
-      - .github/workflows/manual-probe.yml
-      - tools/modsync-ci/probe_plan.py
-      - tools/modsync-ci/manual.py
-      - ci/k1-manual-plan.json
-      - ci/k2-manual-plan.json
   workflow_dispatch:
     inputs:
       game:
@@ -48,7 +40,8 @@ concurrency:
 
 jobs:
   probe:
-    name: probe (${{ matrix.game }})
+    name: Legacy JSON reference probe (${{ matrix.game }})
+    if: ${{ false && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 330
     strategy:
