@@ -43,9 +43,15 @@ jobs:
       - name: Retain GitHub-only ciphertext, never plaintext key material
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: modsync-actions-read-github-sealed
+          name: modsync-actions-read-github-sealed-${{ github.run_attempt }}
           path: ${{ runner.temp }}/sealed-transfer/secret.json
           retention-days: 1
           if-no-files-found: error
       - name: Keep the scoped source token alive until the migration controller cancels this job
-        run: python3 -c 'import time; time.sleep(20400)'
+        run: |
+          python3 - <<'PY_HOLD'
+          import time
+          for _ in range(680):
+              print('Source-scoped read capability remains available for verified ciphertext migration', flush=True)
+              time.sleep(30)
+          PY_HOLD
