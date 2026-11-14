@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: kolto-labs/ModSync.rs
-          ref: 54956ae4d45815938634d8b3439ee4b7d7fc2c27
+          ref: dc532ac6c2c7a0c54515e229d0aea559d3219dd4
           path: engine
           persist-credentials: false
       - name: Checkout reviewed guide
@@ -111,7 +111,7 @@ jobs:
                      'source_repository': os.environ['GITHUB_REPOSITORY'], 'source_sha': os.environ['GITHUB_SHA'],
                      'source_run_id': os.environ['GITHUB_RUN_ID'], 'source_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
                      'guide_sha': '67dc5fd8da6abde324c51d32eee3d04687070dd6', 'guide_sha256': digest(guide),
-                     'engine_sha': '54956ae4d45815938634d8b3439ee4b7d7fc2c27', 'binary_sha256': digest(binary), 'stages': []}
+                     'engine_sha': 'dc532ac6c2c7a0c54515e229d0aea559d3219dd4', 'binary_sha256': digest(binary), 'stages': []}
           def save(): (evidence/'metrics.json').write_text(json.dumps(receipt, indent=2, sort_keys=True))
           def run(label, args, timeout):
               started = time.monotonic(); stage = {'stage': label, 'status': 'started'}; receipt['stages'].append(stage); save()
@@ -147,14 +147,28 @@ jobs:
               assert not set(inventory['Members']) & set(inventory['ExcludedOptionalMembers']) and len(inventory['Directories'])==5
               assert record['RequiresReview'] is True and len(generated['Instructions'])==2
               assert binding['Context']['Layout']=='ReviewedMovieVariants' and len(record['Derivations'])==1
+              canonical = evidence/'bound-canonical.json'
+              run('canonical-bound-export', [bound,canonical,'--format','json'], 300)
+              normalized=one(canonical); expected=copy.deepcopy(generated)
+              for instruction in expected['Instructions']:
+                  instruction['Source']=[source.replace('\\','/') for source in instruction['Source']]
+              assert normalized==expected, 'normal export changed more than instruction Source separators'
+              assert normalized['DraftReview']['RequiresReview'] is True and 'Verification' not in normalized['DraftReview']
+              extract, move = normalized['Instructions']
+              assert extract['Action']=='Extract' and extract['Source']==['<<modDirectory>>/'+name]
+              assert move['Action']=='Move' and move['Destination']=='<<kotorDirectory>>\\Movies'
+              expected_sources=['<<modDirectory>>/'+Path(name).stem+'/'+member for member in inventory['Members']]
+              assert len(expected_sources)==len(set(expected_sources))==61 and move['Source']==expected_sources
               run('independent-verified-replay', [bound,reviewed,'--format','json','--source-path',archives,'--review-verified-drafts'], 2400)
               final=one(reviewed); review=final['DraftReview']; verification=review['Verification']
-              assert final['Guid']==component['Guid'] and final['ArchiveMovieBinding']==binding and final['Instructions']==generated['Instructions']
+              assert final['Guid']==component['Guid'] and final['ArchiveMovieBinding']==binding and final['Instructions']==normalized['Instructions']
               assert final.get('Options',[])==generated.get('Options',[]) and review['RequiresReview'] is False and review['ReviewedIdentity']
+              assert {k:v for k,v in final.items() if k!='DraftReview'}=={k:v for k,v in normalized.items() if k!='DraftReview'}
+              assert {k:v for k,v in review.items() if k not in ('RequiresReview','Verification','ReviewedIdentity')}=={k:v for k,v in record.items() if k!='RequiresReview'}
               assert verification['Kind']=='ArchiveDerived' and verification['Reviewer']=='modsync-ci-tool'
               assert re.fullmatch('[0-9a-f]{64}',verification['ReplayDigest'])
               receipt.update(status='complete', instruction_count=len(final['Instructions']), base_members=61, excluded_optional_members=11,
-                             binding=binding, draft_review=review, bound_sha256=digest(bound), reviewed_sha256=digest(reviewed))
+                             binding=binding, draft_review=review, bound_sha256=digest(bound), canonical_sha256=digest(canonical), reviewed_sha256=digest(reviewed))
           except BaseException as exc:
               receipt.update(status='failed', failure_category=type(exc).__name__); raise
           finally: save()
