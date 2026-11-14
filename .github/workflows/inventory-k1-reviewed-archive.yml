@@ -1,0 +1,286 @@
+# One-time source-owned GET-only inventory; archive payloads never enter the evidence upload.
+name: Inventory reviewed K1 movie archive layout
+on:
+  push:
+    branches: [ci/modsync-key-bootstrap-20261114]
+    paths: [.github/workflows/inventory-k1-reviewed-archive.yml]
+permissions: {contents: read}
+concurrency:
+  group: inventory-k1-reviewed-archive
+  cancel-in-progress: false
+jobs:
+  inventory:
+    if: ${{ github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: mod-cache-seed
+    steps:
+      - name: Checkout exact source tools
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+      - name: Checkout exact admitted guide
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/mod-builds
+          ref: 67dc5fd8da6abde324c51d32eee3d04687070dd6
+          path: guide-input
+          persist-credentials: false
+      - name: Prepare read-only archive reader and public-key evidence encryption
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/k1-reviewed-archive-layout/evidence"
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y --no-install-recommends age 7zip >/dev/null 2>&1
+          python source/tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone" >"$RUNNER_TEMP/k1-reviewed-archive-layout/evidence/reader-bootstrap.log" 2>&1
+      - name: Read exact manifest-associated object and inventory metadata only
+        id: inventory
+        shell: bash
+        env:
+          RCLONE_CONFIG_MODCACHE_TYPE: s3
+          RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_MODCACHE_REGION: auto
+          RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+          RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: |
+          umask 077
+          python - <<'PY_INVENTORY'
+          import contextlib, json, os, re, selectors, shutil, signal, subprocess, sys, tempfile, time
+          from pathlib import Path, PurePosixPath
+          
+          GUIDE_SHA = '67dc5fd8da6abde324c51d32eee3d04687070dd6'
+          EXPECTED_NAME = 'k1rs_30fps_1920x1080.7z'
+          LIST_LIMIT = 256 * 1024
+          TEXT_LIMIT = 64 * 1024
+          TEXT_TOTAL = 256 * 1024
+          base = Path(os.environ['RUNNER_TEMP']) / 'k1-reviewed-archive-layout'
+          evidence = base / 'evidence'
+          evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+          receipt = {'schema_version': 1, 'source_repository': 'kolto-labs/odyssey-ci',
+                     'source_sha': os.environ['GITHUB_SHA'], 'source_run_id': os.environ['GITHUB_RUN_ID'],
+                     'source_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                     'guide_repository': 'kolto-labs/mod-builds', 'guide_sha': GUIDE_SHA,
+                     'reviewed_selection': EXPECTED_NAME, 'status': 'started',
+                     'proof': 'verified source-manifest association and object digest; metadata and bounded README stdout only; no filesystem extraction or payload execution'}
+          
+          def save():
+              (evidence / 'provenance.json').write_text(json.dumps(receipt, indent=2, sort_keys=True))
+          
+          def bounded_output(command, limit, timeout):
+              # The archive reader receives no storage, GitHub or host import credentials.
+              environment = {'PATH': os.environ['PATH'], 'LC_ALL': 'C.UTF-8'}
+              process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                         stderr=subprocess.DEVNULL, env=environment, start_new_session=True)
+              output = bytearray()
+              deadline = time.monotonic() + timeout
+              try:
+                  with selectors.DefaultSelector() as selector:
+                      selector.register(process.stdout, selectors.EVENT_READ)
+                      while True:
+                          left = deadline - time.monotonic()
+                          if left <= 0:
+                              raise ValueError('reader time bound exceeded')
+                          if not selector.select(min(left, 1)):
+                              continue
+                          data = os.read(process.stdout.fileno(), min(65536, limit + 1 - len(output)))
+                          if not data:
+                              break
+                          output.extend(data)
+                          if len(output) > limit:
+                              raise ValueError('reader output bound exceeded')
+                  if process.wait(timeout=max(0.1, deadline - time.monotonic())) != 0:
+                      raise ValueError('reader failed')
+                  return bytes(output)
+              finally:
+                  if process.poll() is None:
+                      os.killpg(process.pid, signal.SIGKILL)
+                  process.wait()
+                  process.stdout.close()
+          
+          def stop(signum, frame):
+              raise InterruptedError('terminated')
+          
+          for signum in (signal.SIGINT, signal.SIGTERM):
+              signal.signal(signum, stop)
+          save()
+          work = Path(tempfile.mkdtemp(prefix='private-', dir=base))
+          try:
+              if (os.environ['GITHUB_REPOSITORY'] != 'kolto-labs/odyssey-ci'
+                      or os.environ['GITHUB_REF'] != 'refs/heads/ci/modsync-key-bootstrap-20261114'):
+                  raise ValueError('source scope mismatch')
+              if subprocess.check_output(['git', '-C', 'source', 'rev-parse', 'HEAD'], text=True).strip() != receipt['source_sha']:
+                  raise ValueError('source identity mismatch')
+              if subprocess.check_output(['git', '-C', 'guide-input', 'rev-parse', 'HEAD'], text=True).strip() != GUIDE_SHA:
+                  raise ValueError('guide identity mismatch')
+              sys.path.insert(0, str(Path('source/tools/modsync-ci').resolve()))
+              with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                  import seed_archives as seed
+              guide = Path('guide-input/content/k1/full.md')
+              receipt['guide_sha256'] = seed.cache.digest(guide)
+              items = [item for item in seed.cache.discover([str(guide)])
+                       if item['provider'] == 'deadlystream'
+                       and (match := seed.cache.FILE_ID.search(item['url'])) and match[1] == '2380']
+              if len(items) != 1:
+                  raise ValueError('expected one exact K1 guide association for DeadlyStream 2380')
+              item = items[0]
+              selected = seed.cache.reviewed_selectors(item)
+              if selected != [{'file': EXPECTED_NAME, 'r': None}] or seed.cache.key_for(item['url']) != item['id']:
+                  raise ValueError('reviewed K1 archive selection drift')
+              receipt.update(guide_url=item['url'], guide_url_id=item['id'])
+              required = ('RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID', 'RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY',
+                          'RCLONE_CONFIG_MODCACHE_ENDPOINT', 'MOD_CACHE_BUCKET')
+              if os.environ.get('MOD_CACHE_BUCKET') != 'modsync-mod-cache' or not all(os.environ.get(name) for name in required):
+                  raise ValueError('source read configuration unavailable')
+              # This existing writer pair is only passed to the existing GET helper.
+              original_rclone = seed.refresh.rclone
+              def bounded_rclone(*args, timeout=600):
+                  return original_rclone(*args, timeout=min(timeout, 1200))
+              seed.refresh.rclone = bounded_rclone
+              manifest_path = work / 'manifest.json'
+              with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                  ok = seed.refresh.fetch('MODCACHE:modsync-mod-cache/modsync-archives/manifest.json', manifest_path,
+                                          '--retries', '1', '--max-transfer', '16M', '--cutoff-mode', 'hard')
+              if not ok or not manifest_path.is_file() or manifest_path.stat().st_size > 16 * 1024 * 1024:
+                  raise ValueError('source manifest unavailable or oversized')
+              receipt['source_manifest_sha256'] = seed.cache.digest(manifest_path)
+              document = json.loads(manifest_path.read_text(encoding='utf-8'))
+              if not isinstance(document, dict) or type(document.get('schema')) is not int or document['schema'] != 1 or not isinstance(document.get('entries'), dict):
+                  raise ValueError('source manifest schema invalid')
+              entry = document['entries'][item['id']]
+              objects = seed.cache.entry_objects(entry)
+              if len(objects) != 1 or not seed.cache.objects_match_selection(item, entry):
+                  raise ValueError('source manifest association is ambiguous')
+              obj = objects[0]
+              if (not isinstance(obj.get('sha256'), str) or not re.fullmatch(r'[0-9a-f]{64}', obj['sha256'])
+                      or type(obj.get('size')) is not int or not 0 < obj['size'] <= seed.cache.MAX_LINK_BYTES
+                      or obj.get('extension') != '7z' or obj.get('archive_name') != EXPECTED_NAME):
+                  raise ValueError('source object does not match the exact selected K1 archive')
+              receipt['object'] = {key: obj[key] for key in ('sha256', 'size', 'extension', 'archive_name')}
+              save()
+              local = work / 'selected.7z'
+              if obj['size'] + seed.refresh.RESERVE >= shutil.disk_usage(work).free:
+                  raise ValueError('insufficient local scratch space')
+              with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                  ok = seed.refresh.fetch('MODCACHE:modsync-mod-cache/modsync-archives/objects/' + obj['sha256'], local,
+                                          '--retries', '1', '--max-transfer', str(obj['size'] + 1), '--cutoff-mode', 'hard')
+              if not ok or not seed.refresh.matches(local, obj['sha256'], obj['size']):
+                  raise ValueError('source object size or digest mismatch')
+              executable = shutil.which('7z') or shutil.which('7zz')
+              if not executable:
+                  raise ValueError('archive metadata reader unavailable')
+              listing = bounded_output([executable, 'l', '-slt', '-ba', '-bd', '-sccUTF-8', '-p-', '--', str(local)], LIST_LIMIT, 120)
+              text = listing.decode('utf-8', errors='strict')
+              (evidence / 'listing.slt.txt').write_text(text, encoding='utf-8')
+              inventory = {'object': receipt['object'], 'members': [], 'texts': [],
+                           'listing_bytes': len(listing), 'listing_limit': LIST_LIMIT, 'member_limit': 100000,
+                           'text_member_limit': TEXT_LIMIT, 'text_total_limit': TEXT_TOTAL}
+              names = set()
+              for block in re.split(r'\r?\n\s*\r?\n', text.strip()):
+                  fields = {}
+                  for line in block.splitlines():
+                      if ' = ' not in line:
+                          raise ValueError('ambiguous technical listing record')
+                      key, value = line.split(' = ', 1)
+                      if key in fields:
+                          raise ValueError('duplicate technical listing field')
+                      fields[key] = value
+                  name = fields.get('Path')
+                  if not name or name in names or len(name) > 4096:
+                      raise ValueError('invalid or duplicate listed path')
+                  names.add(name)
+                  if len(names) > 100000:
+                      raise ValueError('archive entry count bound exceeded')
+                  normalized = PurePosixPath(name.replace('\\', '/'))
+                  unsafe = normalized.is_absolute() or '..' in normalized.parts or ':' in name or any(ord(c) < 32 for c in name)
+                  directory = fields.get('Folder') == '+' or fields.get('Attributes', '').startswith('D')
+                  linked = any('link' in key.casefold() for key in fields) or bool(re.search(r'(?:^|\s)l[rwx-]{9}', fields.get('Attributes', '')))
+                  encrypted = fields.get('Encrypted') == '+'
+                  size = int(fields.get('Size', '0'))
+                  if size < 0:
+                      raise ValueError('invalid listed member size')
+                  inventory['members'].append({'name': name, 'size': size, 'directory': directory,
+                                               'link': linked, 'encrypted': encrypted, 'unsafe_path': unsafe, 'attributes': fields})
+              if not inventory['members']:
+                  raise ValueError('empty archive inventory')
+              text_left = TEXT_TOTAL
+              for member in inventory['members']:
+                  name = PurePosixPath(member['name'].replace('\\', '/'))
+                  if name.suffix.lower() not in ('.txt', '.md') or not name.stem.casefold().replace(' ', '').startswith('readme'):
+                      continue
+                  if len(inventory['texts']) >= 4:
+                      break
+                  row = {'name': member['name'], 'status': 'not-read'}
+                  inventory['texts'].append(row)
+                  if (member['unsafe_path'] or member['directory'] or member['link'] or member['encrypted']
+                          or not 0 < member['size'] <= min(TEXT_LIMIT, text_left)):
+                      row['status'] = 'unsafe-encrypted-or-over-budget'
+                      continue
+                  # -so sends the one selected README only to a bounded memory pipe; it
+                  # never creates archive members on disk. -spd disables wildcard matches.
+                  data = bounded_output([executable, 'x', '-so', '-bd', '-sccUTF-8', '-p-', '-spd', '--', str(local), member['name']],
+                                        min(TEXT_LIMIT, text_left), 120)
+                  if len(data) != member['size']:
+                      raise ValueError('README byte count does not match inventory')
+                  text_left -= len(data)
+                  row.update(status='read-to-memory-only', bytes_read=len(data), encoding='utf-8-with-replacement',
+                             text=data.decode('utf-8', errors='replace'))
+              (evidence / 'layout.json').write_text(json.dumps(inventory, indent=2, sort_keys=True))
+              receipt.update(status='complete', member_count=len(inventory['members']),
+                             unsafe_member_count=sum(member['unsafe_path'] or member['link'] for member in inventory['members']),
+                             readme_bytes=TEXT_TOTAL-text_left)
+          except BaseException as exc:
+              receipt.update(status='failed', failure_category=type(exc).__name__)
+          finally:
+              save()
+              shutil.rmtree(work, ignore_errors=True)
+          print(json.dumps({'status': receipt['status'], 'member_count': receipt.get('member_count', 0)}, sort_keys=True))
+          sys.exit(0 if receipt['status'] == 'complete' else 1)
+          PY_INVENTORY
+      - name: Encrypt archive metadata and provenance only
+        id: evidence
+        if: ${{ always() }}
+        shell: bash
+        env:
+          DIAGNOSTICS_ENCRYPTION_RECIPIENT: age1a5ye9zmxelf0fy6qt2t265463ts28kd0z2cjn95fjt9w3vcssvqqg5e4vg
+          INVENTORY_OUTCOME: ${{ steps.inventory.outcome }}
+        run: |
+          set -euo pipefail
+          umask 077
+          base="$RUNNER_TEMP/k1-reviewed-archive-layout"
+          mkdir -p "$base/evidence" "$base/encrypted"
+          python - <<'PY_OUTCOME'
+          import json, os, pathlib
+          evidence = pathlib.Path(os.environ['RUNNER_TEMP']) / 'k1-reviewed-archive-layout' / 'evidence'
+          (evidence / 'step-outcome.json').write_text(json.dumps({
+              'inventory_outcome': os.environ['INVENTORY_OUTCOME'], 'source_sha': os.environ['GITHUB_SHA'],
+              'source_run_id': os.environ['GITHUB_RUN_ID']}, sort_keys=True))
+          PY_OUTCOME
+          if ! command -v age >/dev/null; then
+            sudo apt-get update -qq >/dev/null 2>&1
+            sudo apt-get install -y --no-install-recommends age >/dev/null 2>&1
+          fi
+          tar -C "$base/evidence" -czf - . | age -r "$DIAGNOSTICS_ENCRYPTION_RECIPIENT" -o "$base/encrypted/k1-archive-layout.tar.gz.age"
+          echo "path=$base/encrypted/k1-archive-layout.tar.gz.age" >> "$GITHUB_OUTPUT"
+      - name: Upload only encrypted metadata
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: k1-reviewed-archive-layout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.evidence.outputs.path }}
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove private source scratch
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python - <<'PY_CLEANUP'
+          import os, pathlib, shutil
+          shutil.rmtree(pathlib.Path(os.environ['RUNNER_TEMP']) / 'k1-reviewed-archive-layout', ignore_errors=True)
+          PY_CLEANUP
