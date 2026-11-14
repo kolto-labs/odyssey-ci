@@ -1,0 +1,235 @@
+# One-time source-owned read-only inventory; no remote writes, execution, or archive extraction.
+name: Probe retained RAR integrity readers
+on:
+  push:
+    branches: [ci/modsync-key-bootstrap-20261114]
+    paths: [.github/workflows/rar-integrity-probe.yml]
+permissions: {contents: read}
+concurrency:
+  group: rar-integrity-probe
+  cancel-in-progress: false
+jobs:
+  inventory:
+    if: ${{ github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: mod-cache-seed
+    steps:
+      - name: Checkout exact source tools
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+      - name: Checkout exact admitted guide
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/mod-builds
+          ref: 67dc5fd8da6abde324c51d32eee3d04687070dd6
+          path: guide-input
+          persist-credentials: false
+      - name: Prepare pinned reader and public-key evidence encryption
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/rar-integrity-probe/evidence"
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y --no-install-recommends age 7zip 7zip-rar libarchive-tools unrar >/dev/null 2>&1
+          python source/tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone" >"$RUNNER_TEMP/rar-integrity-probe/evidence/reader-bootstrap.log" 2>&1
+      - name: Verify exact RAR bytes and compare read-only integrity readers
+        id: inventory
+        shell: bash
+        env:
+          RCLONE_CONFIG_MODCACHE_TYPE: s3
+          RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_MODCACHE_REGION: auto
+          RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+          RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: |
+          umask 077
+          python - <<'PY_PROBE'
+          import contextlib, json, os, selectors, shutil, signal, subprocess, sys, tempfile, time
+          from pathlib import Path
+          
+          EXPECTED = [
+              {'archive_name': 'Extended Enclave.2.5.2.rar', 'sha256': 'ee329c08a30fd9b0e66766e51d841127f477bc8d9acfdc5be94e10fa4933db70', 'size': 13851214},
+              {'archive_name': 'dm_qrts.rar', 'sha256': 'b01f4e6f40ef48db3af3983fe61da5edc0c08c75a645f5fe9b31fcf8baa86136', 'size': 2855850},
+          ]
+          base = Path(os.environ['RUNNER_TEMP']) / 'rar-integrity-probe'
+          evidence = base / 'evidence'
+          evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+          receipt = {'schema_version': 1, 'source_repository': 'kolto-labs/odyssey-ci',
+                     'source_sha': os.environ['GITHUB_SHA'], 'source_run_id': os.environ['GITHUB_RUN_ID'],
+                     'source_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'objects': [], 'status': 'started',
+                     'proof': 'exact-byte SHA256/size validation followed by read-only CRC/decompression probes; no filesystem extraction or payload execution'}
+          
+          def save():
+              (evidence / 'provenance.json').write_text(json.dumps(receipt, indent=2, sort_keys=True))
+          
+          def bounded_reader(command, *, discard_stdout=False, timeout=180):
+              # Even readers running against local bytes receive no storage/GitHub secrets.
+              process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL if discard_stdout else subprocess.PIPE,
+                                         stderr=subprocess.PIPE, start_new_session=True,
+                                         env={'PATH': os.environ['PATH'], 'LC_ALL': 'C.UTF-8'})
+              streams = {'stderr': bytearray()}
+              if not discard_stdout:
+                  streams['stdout'] = bytearray()
+              deadline = time.monotonic() + timeout
+              outcome = 'completed'
+              try:
+                  with selectors.DefaultSelector() as selector:
+                      selector.register(process.stderr, selectors.EVENT_READ, 'stderr')
+                      if not discard_stdout:
+                          selector.register(process.stdout, selectors.EVENT_READ, 'stdout')
+                      while selector.get_map():
+                          if time.monotonic() >= deadline:
+                              outcome = 'timeout'
+                              break
+                          for key, _ in selector.select(0.5):
+                              data = os.read(key.fileobj.fileno(), 8192)
+                              if not data:
+                                  selector.unregister(key.fileobj)
+                                  continue
+                              bucket = streams[key.data]
+                              room = 65536 - len(bucket)
+                              bucket.extend(data[:max(room, 0)])
+                              if len(data) > room:
+                                  outcome = 'metadata-output-limit'
+                                  break
+                          if outcome != 'completed':
+                              break
+                  if outcome != 'completed' and process.poll() is None:
+                      os.killpg(process.pid, signal.SIGKILL)
+                  try:
+                      code = process.wait(timeout=max(0.1, deadline-time.monotonic()))
+                  except subprocess.TimeoutExpired:
+                      outcome = 'timeout'
+                      os.killpg(process.pid, signal.SIGKILL)
+                      code = process.wait()
+                  return {'status': outcome, 'exit_code': code, 'seconds': round(timeout-(deadline-time.monotonic()), 3),
+                          **{name: value.decode('utf-8', errors='replace') for name, value in streams.items()},
+                          'stdout_discarded': discard_stdout, 'metadata_limit_per_stream': 65536}
+              finally:
+                  if process.poll() is None:
+                      os.killpg(process.pid, signal.SIGKILL)
+                  process.wait()
+                  process.stderr.close()
+                  if process.stdout is not None:
+                      process.stdout.close()
+          
+          def stop(signum, frame):
+              raise InterruptedError('terminated')
+          
+          for signum in (signal.SIGINT, signal.SIGTERM):
+              signal.signal(signum, stop)
+          save()
+          work = Path(tempfile.mkdtemp(prefix='private-', dir=base))
+          try:
+              if (os.environ['GITHUB_REPOSITORY'] != 'kolto-labs/odyssey-ci'
+                      or os.environ['GITHUB_REF'] != 'refs/heads/ci/modsync-key-bootstrap-20261114'):
+                  raise ValueError('source scope mismatch')
+              if subprocess.check_output(['git', '-C', 'source', 'rev-parse', 'HEAD'], text=True).strip() != receipt['source_sha']:
+                  raise ValueError('source identity mismatch')
+              sys.path.insert(0, str(Path('source/tools/modsync-ci').resolve()))
+              with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                  import seed_archives as seed
+              required = ('RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID', 'RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY',
+                          'RCLONE_CONFIG_MODCACHE_ENDPOINT', 'MOD_CACHE_BUCKET')
+              if os.environ.get('MOD_CACHE_BUCKET') != 'modsync-mod-cache' or not all(os.environ.get(name) for name in required):
+                  raise ValueError('source read configuration unavailable')
+              original_rclone = seed.refresh.rclone
+              def bounded_rclone(*args, timeout=600):
+                  return original_rclone(*args, timeout=min(timeout, 300))
+              seed.refresh.rclone = bounded_rclone
+              versions = bounded_reader(['dpkg-query', '-W', '-f=${Package} ${Version}\n',
+                                         '7zip', '7zip-rar', 'libarchive-tools', 'unrar'])
+              (evidence / 'reader-package-versions.json').write_text(json.dumps(versions, indent=2, sort_keys=True))
+              for number, obj in enumerate(EXPECTED):
+                  local = work / ('object-%d.rar' % number)
+                  row = {**obj, 'status': 'started', 'readers': {}}
+                  receipt['objects'].append(row)
+                  save()
+                  try:
+                      with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                          ok = seed.refresh.fetch('MODCACHE:modsync-mod-cache/modsync-archives/objects/' + obj['sha256'], local,
+                                                  '--retries', '1', '--max-transfer', str(obj['size'] + 1), '--cutoff-mode', 'hard')
+                      if not ok or not seed.refresh.matches(local, obj['sha256'], obj['size']):
+                          raise ValueError('exact retained object unavailable or mismatched')
+                      row['status'] = 'sha256-and-size-verified'
+                      readers = [('7z', ['t', '-bd', '-sccUTF-8', '-p-', '--', str(local)], False),
+                                 ('7zz', ['t', '-bd', '-sccUTF-8', '-p-', '--', str(local)], False),
+                                 ('bsdtar', ['-xOf', str(local)], True),
+                                 ('unrar', ['t', '-p-', '-idq', '--', str(local)], False)]
+                      for name, arguments, discard in readers:
+                          executable = shutil.which(name)
+                          if executable is None:
+                              row['readers'][name] = {'status': 'not-installed'}
+                              continue
+                          # bsdtar -O directs all decompressed payload bytes to /dev/null;
+                          # the other tools use integrity-only t mode. None runs members.
+                          row['readers'][name] = bounded_reader([executable, *arguments], discard_stdout=discard)
+                          save()
+                      row['status'] = 'compared'
+                  except Exception as exc:
+                      row.update(status='failed', failure_category=type(exc).__name__)
+                  finally:
+                      local.unlink(missing_ok=True)
+                      save()
+              # A failed CRC reader is the evidence sought, not permission to accept bytes.
+              # Probe success means both exact objects were read and compared, not that
+              # either archive passed integrity validation.
+              receipt['status'] = 'complete' if all(row['status']=='compared' for row in receipt['objects']) else 'incomplete'
+          except BaseException as exc:
+              receipt.update(status='failed', failure_category=type(exc).__name__)
+          finally:
+              save()
+              shutil.rmtree(work, ignore_errors=True)
+          print(json.dumps({'status': receipt['status'], 'objects_compared': sum(row['status']=='compared' for row in receipt['objects'])}, sort_keys=True))
+          sys.exit(0 if receipt['status']=='complete' else 1)
+          PY_PROBE
+      - name: Encrypt archive metadata and provenance only
+        id: evidence
+        if: ${{ always() }}
+        shell: bash
+        env:
+          DIAGNOSTICS_ENCRYPTION_RECIPIENT: age1a5ye9zmxelf0fy6qt2t265463ts28kd0z2cjn95fjt9w3vcssvqqg5e4vg
+          INVENTORY_OUTCOME: ${{ steps.inventory.outcome }}
+        run: |
+          set -euo pipefail
+          umask 077
+          base="$RUNNER_TEMP/rar-integrity-probe"
+          mkdir -p "$base/evidence" "$base/encrypted"
+          python - <<'PY_OUTCOME'
+          import json, os, pathlib
+          evidence = pathlib.Path(os.environ['RUNNER_TEMP']) / 'rar-integrity-probe' / 'evidence'
+          (evidence / 'step-outcome.json').write_text(json.dumps({
+              'inventory_outcome': os.environ['INVENTORY_OUTCOME'], 'source_sha': os.environ['GITHUB_SHA'],
+              'source_run_id': os.environ['GITHUB_RUN_ID']}, sort_keys=True))
+          PY_OUTCOME
+          if ! command -v age >/dev/null; then
+            sudo apt-get update -qq >/dev/null 2>&1
+            sudo apt-get install -y --no-install-recommends age >/dev/null 2>&1
+          fi
+          tar -C "$base/evidence" -czf - . | age -r "$DIAGNOSTICS_ENCRYPTION_RECIPIENT" -o "$base/encrypted/rar-integrity.tar.gz.age"
+          echo "path=$base/encrypted/rar-integrity.tar.gz.age" >> "$GITHUB_OUTPUT"
+      - name: Upload only encrypted metadata
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rar-integrity-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.evidence.outputs.path }}
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove private source scratch
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python - <<'PY_CLEANUP'
+          import os, pathlib, shutil
+          shutil.rmtree(pathlib.Path(os.environ['RUNNER_TEMP']) / 'rar-integrity-probe', ignore_errors=True)
+          PY_CLEANUP
