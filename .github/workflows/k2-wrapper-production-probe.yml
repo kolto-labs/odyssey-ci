@@ -1,0 +1,220 @@
+# Eight actual components only; no full-guide, game install, or feature-completeness claim.
+name: Probe production K2 wrapper binding and replay
+on:
+  push:
+    branches: [ci/modsync-key-bootstrap-20261114]
+    paths: [.github/workflows/k2-wrapper-production-probe.yml]
+permissions: {contents: read}
+concurrency: {group: k2-wrapper-production-probe, cancel-in-progress: false}
+jobs:
+  probe:
+    if: ${{ github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: mod-cache-seed
+    steps:
+      - name: Checkout reviewed source GET helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 3045420a6082d82c7b39ccf58351e1704392439d
+          path: source
+          persist-credentials: false
+      - name: Checkout exact production engine
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/ModSync.rs
+          ref: ce2834b346ff736aa36189c49f70e9b8629005b9
+          path: engine
+          persist-credentials: false
+      - name: Checkout reviewed guide
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/mod-builds
+          ref: 67dc5fd8da6abde324c51d32eee3d04687070dd6
+          path: guide-input
+          persist-credentials: false
+      - name: Prepare isolated production toolchain
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          umask 077
+          base="$RUNNER_TEMP/k2-wrapper-production-probe"
+          mkdir -p "$base/evidence" "$base/archives" "$base/home" "$base/cargo" "$base/tmp"
+          sudo rm -rf -- /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+          sudo apt-get install -y --no-install-recommends age 7zip 7zip-rar unrar libarchive-tools pkg-config libssl-dev
+          rustup toolchain install 1.95.0 --profile minimal
+          env -i PATH="$PATH" HOME="$base/home" RUSTUP_HOME="$HOME/.rustup" rustc +1.95.0 -Vv >"$base/evidence/rustc.txt"
+          python source/tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone" >"$base/evidence/reader-bootstrap.log" 2>&1
+      - name: Build the actual production CLI with release safety checks
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          base="$RUNNER_TEMP/k2-wrapper-production-probe"
+          cd engine
+          /usr/bin/time -v -o "$base/evidence/build-time.txt" env -i PATH="$PATH" HOME="$base/home" \
+            RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$base/cargo" CARGO_TARGET_DIR="$base/target" TMPDIR="$base/tmp" \
+            CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
+            cargo +1.95.0 build --release --locked --lib --bin modsync -j2 --no-default-features >"$base/evidence/build.log" 2>&1
+      - name: Read only the eight exact source objects and verify their pins
+        timeout-minutes: 25
+        env:
+          SOURCE_READ_ID: ${{ secrets.MOD_CACHE_S3_READ_ACCESS_KEY_ID }}
+          SOURCE_READ_SECRET: ${{ secrets.MOD_CACHE_S3_READ_SECRET_ACCESS_KEY }}
+          SOURCE_WRITE_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+          SOURCE_WRITE_SECRET: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
+          SOURCE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: |
+          umask 077
+          python - <<'PY_FETCH'
+          import contextlib, json, os, shutil, sys, time
+          from pathlib import Path
+          base=Path(os.environ['RUNNER_TEMP'])/'k2-wrapper-production-probe'
+          evidence=base/'evidence'
+          PLAN=json.loads('[{"component_guid":"be764bb8-4c17-85a4-8a31-7a23ea0a19df","component":"Honest Merchant","sha256":"88ebcdef87b6aa264702e41da57733b01ed38410558d0b7e2a42dd961647f7b3","size":259527,"archive_name":"dendis_merchant_mod.rar","wrapper":"dendis merchant mod","installer":"dendis merchant mod/TSLPatcher.exe","documentation":["dendis merchant mod/readme.txt"],"eligible_under_provisional_layout":true,"expected_generated_extract_source":"<<modDirectory>>\\\\dendis_merchant_mod.rar","expected_generated_patcher_source":"<<modDirectory>>\\\\dendis_merchant_mod/dendis merchant mod\\\\TSLPatcher.exe","payload_member_count":3,"payload_members_sha256":"318d0d44520e2b2a2f28bc1cb42cb681f9a7a66e7206be2cf61b9bb3f271ce04"},{"component_guid":"21cf7e64-44c9-862f-a8c7-df867312c607","component":"Onderon News Makes Sense","sha256":"545fc28e3eae621e8ffb5c36642ef05e3ead6604ea0217a4b3a40978635d6373","size":9406760,"archive_name":"Onderon news make sense v1.1.zip","wrapper":"Onderon news make sense","installer":"Onderon news make sense/HoloPatcher.exe","documentation":["Onderon news make sense/Read me.txt"],"eligible_under_provisional_layout":true,"expected_generated_extract_source":"<<modDirectory>>\\\\Onderon news make sense v1.1.zip","expected_generated_patcher_source":"<<modDirectory>>\\\\Onderon news make sense v1.1/Onderon news make sense\\\\HoloPatcher.exe","payload_member_count":5,"payload_members_sha256":"e438c7171e749ad0d65cfea3e213971138ee5867320fd34c0c669de95ecf3106"},{"component_guid":"ec7ead25-991c-89e5-bee8-01e1a5b8ef69","component":"Better Disciple Meditation","sha256":"abdc7157ce333f841c5fb275c01a237c34c64f3bad3a07446a7cd1ec1f8bad73","size":532304,"archive_name":"Better Disciple Meditation.zip","wrapper":"Better Disciple Meditation","installer":null,"documentation":["Better Disciple Meditation/readme.txt"],"eligible_under_provisional_layout":false,"expected_generated_extract_source":"<<modDirectory>>\\\\Better Disciple Meditation.zip","expected_generated_patcher_source":null,"payload_member_count":14,"payload_members_sha256":"77f50526ad57002c58f8b29e44443f0ff6692e765a27098b7d880aee0dc0c398"},{"component_guid":"1a7ac764-f51b-882e-ab19-8c1a13bbbcaa","component":"Bao-Dur & Heavy Armor","sha256":"ade6ec5adb97903725048c0faa724206c9dfdf63c35bf5f45ec7029d722f05f8","size":1032467,"archive_name":"Bao-Dur_Can_Wear_Heavy_Armor.zip","wrapper":"Bao-Dur_Can_Wear_Heavy_Armor","installer":"Bao-Dur_Can_Wear_Heavy_Armor/Bao-Dur_Can_Wear_Heavy_Armor.exe","documentation":["Bao-Dur_Can_Wear_Heavy_Armor/readme.txt"],"eligible_under_provisional_layout":false,"expected_generated_extract_source":"<<modDirectory>>\\\\Bao-Dur_Can_Wear_Heavy_Armor.zip","expected_generated_patcher_source":"<<modDirectory>>\\\\Bao-Dur_Can_Wear_Heavy_Armor/Bao-Dur_Can_Wear_Heavy_Armor\\\\Bao-Dur_Can_Wear_Heavy_Armor.exe","payload_member_count":10,"payload_members_sha256":"a6d2b78c99f3dfaf84ef8ac666f6bd371945263bc74cbd13d90f6d610e71a65d"},{"component_guid":"d636ea9c-91a4-8954-99ef-5adcfdd23582","component":"Jekk\'Jekk\'Tarr Thugs","sha256":"2e921a217017ae5770b4531fbb59603bf2acdd3f77e7945264f81ab19e56009c","size":9348844,"archive_name":"Better Jekk_Jekk Tarr Thugs.zip","wrapper":"Better Jekk\'Jekk Tarr Thugs","installer":"Better Jekk\'Jekk Tarr Thugs/HoloPatcher.exe","documentation":["Better Jekk\'Jekk Tarr Thugs/Read me.txt"],"eligible_under_provisional_layout":true,"expected_generated_extract_source":"<<modDirectory>>\\\\Better Jekk_Jekk Tarr Thugs.zip","expected_generated_patcher_source":"<<modDirectory>>\\\\Better Jekk_Jekk Tarr Thugs/Better Jekk\'Jekk Tarr Thugs\\\\HoloPatcher.exe","payload_member_count":18,"payload_members_sha256":"ba75ae4b9b42defd596a798f78a0723404286ad59576180231ec7ff7e6f91352"},{"component_guid":"079aebde-7475-8d37-8d6b-f4a9fa355ca8","component":"Assassins with Lightsabers","sha256":"f347b4c728a52dfc816134b297af5ce7fc1b506eeae88437fcb77445efb97ebf","size":9379189,"archive_name":"SAWL_2.0.zip","wrapper":"SAWL","installer":"SAWL/HoloPatcher.exe","documentation":["SAWL/ReadMe.txt"],"eligible_under_provisional_layout":true,"expected_generated_extract_source":"<<modDirectory>>\\\\SAWL_2.0.zip","expected_generated_patcher_source":"<<modDirectory>>\\\\SAWL_2.0/SAWL\\\\HoloPatcher.exe","payload_member_count":5,"payload_members_sha256":"c851656462ff53ddd8811ed716a8cc43717964fc2c0fcf918e5d344729d178d1"},{"component_guid":"3eb56efe-013e-8095-80cf-a2584ba2cf94","component":"HQ Blasters","sha256":"a088f3bf81891ea2713e46e60cdf7926aa30287ed86991788fecc6745f8996c3","size":23973258,"archive_name":"TSL_High_Quality_Blasters.zip","wrapper":"Install","installer":"Install/High Quality Blasters Installer.exe","documentation":["Install/README.txt"],"eligible_under_provisional_layout":false,"expected_generated_extract_source":"<<modDirectory>>\\\\TSL_High_Quality_Blasters.zip","expected_generated_patcher_source":"<<modDirectory>>\\\\TSL_High_Quality_Blasters/Install\\\\High Quality Blasters Installer.exe","payload_member_count":265,"payload_members_sha256":"ff2a60636875afb00f8582f778bcf84ed3bef864dfdb0d9ef2cbdc2d3671a120"},{"component_guid":"2de86e49-571f-8600-931e-5bc2ad5acebe","component":"Rescaled Trandoshans","sha256":"f8939839eac387aa8e120116686baa7281b3226cdb5b941ba7d7389040e5b644","size":528129,"archive_name":"Rescaled Trandoshans.zip","wrapper":"Rescaled Trandoshans","installer":"Rescaled Trandoshans/TSLPatcher.exe","documentation":[],"eligible_under_provisional_layout":false,"expected_generated_extract_source":"<<modDirectory>>\\\\Rescaled Trandoshans.zip","expected_generated_patcher_source":"<<modDirectory>>\\\\Rescaled Trandoshans/Rescaled Trandoshans\\\\TSLPatcher.exe","payload_member_count":5,"payload_members_sha256":"15b91ea68d6cd5fb9505921c06d6f32e65282c083612860fc2f1630693b0fdff"}]')
+          receipt={'schema_version':1,'scope':'eight exact source objects; GET only','objects':[],'status':'started'}
+          def save(): (evidence/'fetch-receipt.json').write_text(json.dumps(receipt,indent=2))
+          save()
+          try:
+              assert os.environ.get('MOD_CACHE_BUCKET')=='modsync-mod-cache'
+              pair=next((p for p in ('READ','WRITE') if all(os.environ.get('SOURCE_'+p+'_'+s) for s in ('ID','SECRET'))),None)
+              assert pair and os.environ.get('SOURCE_ENDPOINT'), 'complete existing source pair and endpoint required'
+              config={'TYPE':'s3','PROVIDER':'Cloudflare','REGION':'auto','NO_CHECK_BUCKET':'true',
+                      'ACCESS_KEY_ID':os.environ['SOURCE_'+pair+'_ID'],'SECRET_ACCESS_KEY':os.environ['SOURCE_'+pair+'_SECRET'],
+                      'ENDPOINT':os.environ['SOURCE_ENDPOINT']}
+              for k in list(os.environ):
+                  if k.startswith(('SOURCE_','RCLONE_CONFIG_','AWS_')): del os.environ[k]
+              os.environ.update({'RCLONE_CONFIG_MODCACHE_'+k:v for k,v in config.items()})
+              del config
+              assert shutil.disk_usage(base).free>3*sum(p['size'] for p in PLAN)+5*1024**3
+              sys.path.insert(0,str(Path('source/tools/modsync-ci').resolve()))
+              import seed_archives as seed
+              original=seed.refresh.rclone
+              seed.refresh.rclone=lambda *args,timeout=1800: original(*args,timeout=min(timeout,300))
+              with (evidence/'fetch-private.log').open('w') as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+                  for item in PLAN:
+                      started=time.monotonic();local=base/'archives'/item['archive_name']
+                      ok=seed.refresh.fetch('MODCACHE:modsync-mod-cache/modsync-archives/objects/'+item['sha256'],local,
+                                            '--retries','1','--max-transfer',str(item['size']+1),'--cutoff-mode','hard')
+                      assert ok and seed.refresh.matches(local,item['sha256'],item['size']), 'exact source object unavailable'
+                      receipt['objects'].append({'sha256':item['sha256'],'size':item['size'],'status':'verified','seconds':time.monotonic()-started});save()
+              receipt['status']='verified'
+              (evidence/'plan.json').write_text(json.dumps(PLAN,indent=2))
+          except BaseException as exc:
+              receipt.update(status='failed',failure_category=type(exc).__name__);save();sys.exit(1)
+          finally: save()
+          PY_FETCH
+      - name: Execute actual production conversion binding and independent replay
+        timeout-minutes: 35
+        run: |
+          umask 077
+          python - <<'PY_PROOF'
+          import copy, hashlib, json, os, re, subprocess, time, tomllib
+          from pathlib import Path
+          base=Path(os.environ['RUNNER_TEMP'])/'k2-wrapper-production-probe'
+          evidence=base/'evidence';archives=base/'archives';binary=base/'target/release/modsync'
+          guide=Path('guide-input/content/k2/full.md').resolve()
+          PLAN=json.loads((evidence/'plan.json').read_text())
+          expected={p['component_guid']:p for p in PLAN};eligible={g for g,p in expected.items() if p['eligible_under_provisional_layout']}
+          assert len(expected)==8 and len(eligible)==4
+          def digest(path):
+              with path.open('rb') as stream: return hashlib.file_digest(stream,'sha256').hexdigest()
+          env={'PATH':os.environ['PATH'],'HOME':str(base/'home'),'TMPDIR':str(base/'tmp'),'LC_ALL':'C.UTF-8'}
+          receipt={'schema_version':1,'scope':'eight real K2 components; no full-guide or installation claim','status':'started',
+                   'source_repository':os.environ['GITHUB_REPOSITORY'],'source_sha':os.environ['GITHUB_SHA'],
+                   'source_run_id':os.environ['GITHUB_RUN_ID'],'source_run_attempt':os.environ['GITHUB_RUN_ATTEMPT'],
+                   'engine_sha':'ce2834b346ff736aa36189c49f70e9b8629005b9','guide_sha':'67dc5fd8da6abde324c51d32eee3d04687070dd6',
+                   'guide_sha256':digest(guide),'binary_sha256':digest(binary),'stages':[],
+                   'reviewed_inventory_artifact_id':14136962481,'reviewed_inventory_artifact_digest':'sha256:4dfcb9842919935ec23b7ac1453b4d4a45f85960808621adca671574ef5bb047',
+                   'reviewed_inventory_sha256':'7a6b333858553509b26a64684c48ff1fd6566b56538355934806185bab072ba7'}
+          def save(): (evidence/'metrics.json').write_text(json.dumps(receipt,indent=2,sort_keys=True))
+          def run(stage,args,timeout=300):
+              step={'stage':stage,'status':'started'};receipt['stages'].append(step);started=time.monotonic();save()
+              try:
+                  with (evidence/(stage+'.log')).open('w') as log:
+                      result=subprocess.run([str(binary),'convert',*map(str,args)],env=env,stdin=subprocess.DEVNULL,
+                                            stdout=log,stderr=subprocess.STDOUT,timeout=timeout,check=True)
+                  step.update(status='complete',exit_code=result.returncode)
+              finally: step['seconds']=time.monotonic()-started;save()
+          def load(path):
+              value=json.loads(path.read_text());assert isinstance(value,list);return value
+          def normalize(value):
+              value=copy.deepcopy(value)
+              for instruction in value.get('Instructions',[]):
+                  instruction['Source']=[s.replace('\\','/') for s in instruction['Source']]
+              return value
+          try:
+              for directory,sha in [('engine',receipt['engine_sha']),('guide-input',receipt['guide_sha']),('source','3045420a6082d82c7b39ccf58351e1704392439d')]:
+                  assert subprocess.check_output(['git','-C',directory,'rev-parse','HEAD'],env=env,text=True).strip()==sha
+              assert receipt['guide_sha256']=='f442bdf574031623ed577609730d887069b9bc8e38e8e2f38ecc43a7e7487d5f'
+              fetched=json.loads((evidence/'fetch-receipt.json').read_text())
+              assert fetched['status']=='verified' and {o['sha256'] for o in fetched['objects']}=={p['sha256'] for p in PLAN}
+              whole,projected,bound,canonical,reviewed=[evidence/(s+'.json') for s in ('whole-guide','projected','bound','bound-canonical','reviewed')]
+              run('whole-guide-convert',[guide,whole,'--format','json','--parse-directions'])
+              whole_toml=evidence/'whole-guide.toml'
+              run('whole-guide-metadata-convert',[guide,whole_toml,'--format','toml','--parse-directions'])
+              all_components=load(whole);assert len(all_components)==151
+              selected=[copy.deepcopy(c) for c in all_components if c['Guid'] in expected]
+              assert len(selected)==8 and len({c['Guid'] for c in selected})==8
+              original={c['Guid']:c for c in selected}
+              assert all(not c['Instructions'] and not c.get('Options') for c in selected)
+              metadata=tomllib.loads(whole_toml.read_text())['metadata']
+              projected.write_text(json.dumps({'thisMod':selected,'metadata':metadata},indent=2))
+              assert json.loads(projected.read_text())['thisMod']==selected
+              resolved=evidence/'resolved-archives.json'
+              resolved.write_text(json.dumps([{'componentGuid':p['component_guid'],'filenames':[p['archive_name']],
+                                              'sha256':p['sha256'],'sizeBytes':p['size']} for p in PLAN],indent=2))
+              receipt.update(full_component_count=151,projected_component_guids=[c['Guid'] for c in selected],
+                             plan_sha256=digest(evidence/'plan.json'),projection='unchanged eight components in original order; exact CLI-exported guide metadata retained')
+              run('resolved-archive-bind',[projected,bound,'--format','json','--source-path',archives,'--resolved-archives',resolved],600)
+              generated=load(bound);assert [c['Guid'] for c in generated]==[c['Guid'] for c in selected]
+              assert {c['Guid'] for c in generated if len(c['Instructions'])==2}==eligible
+              for c in generated:
+                  guid=c['Guid'];p=expected[guid];record=c['DraftReview'];assert record['RequiresReview'] is True and 'Verification' not in record
+                  if guid in eligible:
+                      binding=c['ArchiveMethodBinding'];extract,patch=c['Instructions']
+                      assert binding['Filename']==p['archive_name'] and binding['Sha256']==p['sha256'] and binding['Bytes']==p['size']
+                      assert binding['Installer']==p['installer'] and sorted(binding['ExcludedDocumentation'])==sorted(p['documentation'])
+                      assert record['Generator']=='resolved-filenames' and record['MethodContext']['Kind']=='Patcher'
+                      assert record['MethodContext']['ArchiveBinding']=='Bound'
+                      assert record['Result']['UnparsedGaps']==record['Result']['ConditionalDrafts']==[] and record['Result']['RejectedDrafts']==0
+                      assert len(binding['Members'])==p['payload_member_count']
+                      assert hashlib.sha256(json.dumps(sorted(binding['Members']),separators=(',',':')).encode()).hexdigest()==p['payload_members_sha256']
+                      assert extract['Action']=='Extract' and extract['Source']==[p['expected_generated_extract_source']] and extract['Destination']==''
+                      assert patch['Action']=='Patcher' and patch['Source']==[p['expected_generated_patcher_source']] and patch['Destination']=='<<gameDirectory>>'
+                      assert extract['Arguments']==patch['Arguments']=='' and not c.get('Options')
+                      mutable={'Instructions','DraftReview','ArchiveMethodBinding'}
+                  else:
+                      assert c==original[guid] and c['Instructions']==[] and 'ArchiveMethodBinding' not in c
+                      mutable=set()
+                  assert {k:v for k,v in c.items() if k not in mutable}=={k:v for k,v in original[guid].items() if k not in mutable}
+              run('canonical-bound-export',[bound,canonical,'--format','json'])
+              normalized=load(canonical);assert normalized==[normalize(c) for c in generated]
+              run('independent-verified-replay',[bound,reviewed,'--format','json','--source-path',archives,'--review-verified-drafts'],600)
+              final=load(reviewed);assert [c['Guid'] for c in final]==[c['Guid'] for c in selected]
+              assert {c['Guid'] for c in final if c['DraftReview']['RequiresReview'] is False}==eligible
+              for before,after in zip(normalized,final):
+                  if after['Guid'] not in eligible: assert after==before;continue
+                  assert {k:v for k,v in before.items() if k!='DraftReview'}=={k:v for k,v in after.items() if k!='DraftReview'}
+                  review=after['DraftReview'];prior=before['DraftReview'];verification=review['Verification']
+                  assert {k:v for k,v in review.items() if k not in ('RequiresReview','Verification','ReviewedIdentity')}=={k:v for k,v in prior.items() if k!='RequiresReview'}
+                  assert review['ReviewedIdentity'] and verification['Kind']=='ArchiveDerived' and verification['Reviewer']=='modsync-ci-tool'
+                  assert re.fullmatch('[0-9a-f]{64}',verification['ReplayDigest'])
+              receipt.update(status='complete',eligible_guids=sorted(eligible),negative_guids=sorted(set(expected)-eligible),
+                             bound_sha256=digest(bound),canonical_sha256=digest(canonical),reviewed_sha256=digest(reviewed))
+          except BaseException as exc:
+              receipt.update(status='failed',failure_category=type(exc).__name__);raise
+          finally: save()
+          PY_PROOF
+      - name: Retain encrypted production-probe evidence
+        id: evidence
+        if: ${{ always() }}
+        uses: ./engine/.github/actions/retain-fullrun-evidence
+        with:
+          source: ${{ runner.temp }}/k2-wrapper-production-probe/evidence
+          name: k2-wrapper-production-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          encryption-recipient: age1a5ye9zmxelf0fy6qt2t265463ts28kd0z2cjn95fjt9w3vcssvqqg5e4vg
+      - name: Remove disposable private scratch after successful evidence retention
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        run: rm -rf -- "${RUNNER_TEMP:?}/k2-wrapper-production-probe"

@@ -167,7 +167,7 @@ jobs:
               assert key not in fields,'duplicate RAR listing field';fields[key]=value
            else:
             records=[]
-            for block in re.split(r'\r?\n\s*\r?\n',text.strip()):
+            for block in re.split(r'\r?\n\s*\r?\n',text.strip('\r\n')):
              fields={}
              for line in block.splitlines():
               assert ' = ' in line,'ambiguous listing';key,value=line.split(' = ',1);assert key not in fields;fields[key]=value
