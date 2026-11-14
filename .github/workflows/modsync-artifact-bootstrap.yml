@@ -1,3 +1,4 @@
+# Temporary read capability for exact three-object migration; revoke after import.
 name: One-time temporary Actions-read bootstrap to ModSync.rs
 on:
   push:
@@ -8,7 +9,7 @@ jobs:
   sealed-transfer:
     if: ${{ github.repository_id == '1427366340' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
+    timeout-minutes: 120
     steps:
       - name: Install signed distribution crypto library
         run: |
@@ -51,7 +52,7 @@ jobs:
         run: |
           python3 - <<'PY_HOLD'
           import time
-          for _ in range(680):
+          for _ in range(210):
               print('Source-scoped read capability remains available for verified ciphertext migration', flush=True)
               time.sleep(30)
           PY_HOLD
