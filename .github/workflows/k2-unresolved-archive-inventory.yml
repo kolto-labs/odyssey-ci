@@ -1,0 +1,216 @@
+name: Inventory exact K2 unresolved binding archives
+'on':
+  push:
+    branches:
+    - ci/modsync-key-bootstrap-20261114
+    paths:
+    - .github/workflows/k2-unresolved-archive-inventory.yml
+permissions:
+  contents: read
+concurrency:
+  group: k2-unresolved-archive-inventory
+  cancel-in-progress: false
+jobs:
+  inventory:
+    if: ${{ github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: mod-cache-seed
+    steps:
+    - name: Checkout pinned source
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: kolto-labs/odyssey-ci
+        ref: 3045420a6082d82c7b39ccf58351e1704392439d
+        path: source
+        persist-credentials: false
+    - name: Checkout pinned engine
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: kolto-labs/ModSync.rs
+        ref: 32fd39ba12c489245b1cabb0e4d064d559a021b9
+        path: engine
+        persist-credentials: false
+    - name: Checkout pinned guide
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: kolto-labs/mod-builds
+        ref: 67dc5fd8da6abde324c51d32eee3d04687070dd6
+        path: guide-input
+        persist-credentials: false
+    - name: Prepare bounded reader and encryption
+      timeout-minutes: 10
+      run: |
+        set -euo pipefail
+        umask 077
+        mkdir -p "$RUNNER_TEMP/k2-unresolved-archive-inventory/evidence" "$RUNNER_TEMP/k2-unresolved-archive-inventory/home"
+        sudo timeout 300 apt-get -o Acquire::Retries=2 update -qq
+        sudo timeout 300 apt-get -o Acquire::Retries=2 install -y --no-install-recommends age 7zip 7zip-rar unrar file innoextract
+        python source/tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone"
+    - name: GET only exact reviewed objects
+      timeout-minutes: 40
+      env:
+        RCLONE_CONFIG_MODCACHE_TYPE: s3
+        RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+        RCLONE_CONFIG_MODCACHE_REGION: auto
+        RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+        RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+        RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
+        RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+        MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+      run: |
+        umask 077
+        python - <<'PY_FETCH'
+        import contextlib, hashlib, json, os, shutil, sys, time
+        from pathlib import Path
+        base=Path(os.environ['RUNNER_TEMP'])/'k2-unresolved-archive-inventory'
+        evidence=base/'evidence'; objects=base/'objects'; objects.mkdir(mode=0o700)
+        PLAN = [{'component_guid': 'be764bb8-4c17-85a4-8a31-7a23ea0a19df', 'component': 'Honest Merchant', 'url': 'https://deadlystream.com/files/file/1904-honest-merchant-tslrcm/', 'url_id': '95a1f95eb536a5785cd08b2a5c0fccdc95cf22bda8e2fd5f3af8c2bb88eaddbd', 'archive_name': 'dendis_merchant_mod.rar', 'sha256': '88ebcdef87b6aa264702e41da57733b01ed38410558d0b7e2a42dd961647f7b3', 'size': 259527}, {'component_guid': '27b988f5-615d-88ef-af93-d4e6a6f264e9', 'component': 'New Holocron Textures', 'url': 'http://deadlystream.com/files/file/283-new-texture-of-holocrons-in-the-telos-secret-academy/', 'url_id': '47164c10e86289a75bf36a88d183779ff166cec5e3c423f330d7d537721487e6', 'archive_name': 'AtrisHolocron.7z', 'sha256': 'af911024285b5e734c43ae4653dd14babdc1bb9878f957b02191033c55f7ff2c', 'size': 923581}, {'component_guid': '97d39844-42a1-8664-98ef-c02a1f2c6b2a', 'component': "Darth Malak's Armor", 'url': 'http://www.nexusmods.com/kotor2/mods/9/', 'url_id': 'ae56149fff10f17ea863c5853c9d15d5d35de098fd677a4ac9df0d1f2d4b82cf', 'archive_name': 'TSL_Darth_Malaks_Armour_PMBM05_Reskin-9-1-0.7z', 'sha256': 'fa14574479abb668b1cb145bb46cd70e6e72a65e1a0d9553245b24aba16bfc43', 'size': 1059675}, {'component_guid': '7b678426-adfb-8f47-a090-bf8e263dc37f', 'component': 'Mandalorian Worn-Out Armor', 'url': 'https://mega.nz/modsync-fragment/27f5c49cc3b69df9', 'url_id': '8f1b0fcb76f1a89379b24686f911292ba00c5f8a3193341e58708452346671ee', 'archive_name': 'Mandalorian Worn-Out Armour Reskin.rar', 'sha256': '8b38c3bb158395af5718db3a02f74f4995f06ebb1e93975f90355b330e0e89f8', 'size': 1574488}, {'component_guid': '93f58945-78b4-8fb9-996e-b67dce2933c3', 'component': 'HD NPC Portraits', 'url': 'https://deadlystream.com/files/file/1770-hd-npc-portraits/', 'url_id': '72d3259e22e7c42c775ac6e4843000dc229d2b5d9c81df9c43e35ddcdd2cc6b5', 'archive_name': 'hd_npc_portraits_tsl-1.1.7z', 'sha256': '27130e9134c6c0ba845fad3b197539c5afd91048fdba1b5df42a56964a7030e9', 'size': 7374347}, {'component_guid': '35384a76-4529-88d0-a8aa-55904d163d80', 'component': 'HD PC Portraits', 'url': 'https://deadlystream.com/files/file/1769-hd-pc-portraits/', 'url_id': '300814e5a4ff16567092302d10bee7158d39766934812d50f169abe11a2af4de', 'archive_name': 'hd_pc_portraits_tsl-1.1.7z', 'sha256': '5899299b7b1fbbc00f8008ea18b13e1163bf4acc1bf24b4ff29a4b69c14e534f', 'size': 22374875}, {'component_guid': '8823785c-725f-8a23-8db5-0b4a8d49de30', 'component': 'Stylized Portraits TSL', 'url': 'https://deadlystream.com/files/file/1977-stylized-portraits-tsl-created-by-tinman888/', 'url_id': '49386cb3fa914f3b137b50f9512c04a58428ed7a48f0c73da21acab5568cc6a2', 'archive_name': 'Stylized Portraits TSL 1.3.7z', 'sha256': '5383e2e192604de9c2b15ba2ccac0ae2cfafc9583702c5632b57b80709649c1d', 'size': 8797640}, {'component_guid': 'baedd512-a14d-8c31-a651-d2d45d4afae9', 'component': "Detran's Revan", 'url': 'https://deadlystream.com/files/file/2350-detrans-darth-revan/', 'url_id': '60a54eca80a94f63b568beb1c1174e8f8dc835109dc338ef7fe47688af600717', 'archive_name': 'Detran_s Darth Revan.zip', 'sha256': '7a70a356065e120cca1198b2bb3bd92a833c18b93ad98914d53171ca2e673def', 'size': 3162990}, {'component_guid': 'bd44defe-db68-8c7f-bccf-19285d434b2e', 'component': 'Lore-Friendly Mandalore Mask', 'url': 'https://deadlystream.com/files/file/1848-expanded-lore-friendly-mandalores-mask-with-matching-armor-and-icons-upscaled-high-quality-textures/', 'url_id': 'caa14ae04d963826d535d5a3d4c9ca5bed72d71e1186388f03034ffacd8cedbb', 'archive_name': 'Expanded lore friendly mandalores mask HD 6 versions.rar', 'sha256': 'ba50e241faa8ce4f8d36e7ec61ff5f9d5397198fc8701ff8fea27ab994141847', 'size': 45965967}, {'component_guid': '9687845e-d9c1-8f8d-b4b4-14e638ba4d71', 'component': 'Swoop Monitor Replacement Pack', 'url': 'https://deadlystream.com/files/file/1252-tsl-swoop-monitors-replacement-pack/', 'url_id': '7c2b033062b48748ffa330184418c3f113d5251cf3511ea72c95757c7063ff23', 'archive_name': 'SH_Swoop Monitors.7z', 'sha256': '0618d67e634d238edae5fb104018f1b468de3250056ff9484a4755eecfff683c', 'size': 25822455}, {'component_guid': 'e8501df3-9a84-8f60-988c-15f30ca01af7', 'component': "JC's Citadel Station Backdrop", 'url': 'https://deadlystream.com/files/file/1217-jcs-citadel-station-backdrop/', 'url_id': '2e04d5950d235d8beb4538ea69e9a896f193d6941a60e4dd7f0f5663e2fc03a2', 'archive_name': 'KOTOR2-Citadel-Station-Backdrop_v2.0.0_4k.zip', 'sha256': 'ddaae12569dd7cf29d9097f7ff15a773b55cb2b80237b01310b27bc49c4dccbd', 'size': 2887658}, {'component_guid': 'bbd6d8a0-e6e3-816e-a9b8-65fe8b0a9124', 'component': 'Ebon Hawk Cockpit Upgrade (LEH_Scre01)', 'url': 'https://deadlystream.com/files/file/2258-ebon-hawk-cockpit-upgrade-leh_scre01-more-subtle-version/', 'url_id': 'f609365031fe965794822c27e6288edecf112a2c131494464f7152ac32a15c90', 'archive_name': 'SH_EHCockpitUpgrade_LEH_Scre01_MS.7z', 'sha256': '1ffd749b8ffcfeb6d5735161e72d1360bf72e7f398abdc3765b4c655b7abe2dc', 'size': 2192608}, {'component_guid': '21cf7e64-44c9-862f-a8c7-df867312c607', 'component': 'Onderon News Make Sense', 'url': 'https://deadlystream.com/files/file/2655-onderon-news-make-sense/', 'url_id': 'a907f6b003c652b426abee7846d54e735bd9cc0196ae0a737c43d9217ed74ac1', 'archive_name': 'Onderon news make sense v1.1.zip', 'sha256': '545fc28e3eae621e8ffb5c36642ef05e3ead6604ea0217a4b3a40978635d6373', 'size': 9406760}, {'component_guid': '40d00784-6d4e-86ba-a2be-c9d24630bbfe', 'component': 'Kinrath Egg Bash Crystal Drop Fix', 'url': 'http://deadlystream.com/files/file/167-kinrath-egg-bash-crystal-drop/', 'url_id': '97735926d045b41e0ee9de7d8a4a9b19c46ba0416a0274ca2f8de260d7135c1c', 'archive_name': 'Kinrath Egg Bash Crystal Drop V0.9.rar', 'sha256': '79778364ea1ef91252909ce47bd1c409c2a994bffd5b1998f7f3f2a53ec92634', 'size': 2426}, {'component_guid': 'a38fc2df-8c87-84ea-afab-d5b98c28b4cf', 'component': "Kreia's Fall Ingame Cutscene", 'url': 'https://deadlystream.com/files/file/1228-kreias-fall-cutscene-in-game/', 'url_id': '940ea7a1721840369adcdfb606d7fee7b137faa979f30f7ff1e9790efb86192d', 'archive_name': 'Kreia_Fall_In-game_1.2.rar', 'sha256': 'eef68f35f82c1fe6b933ce3047d2e47f1bf92700251705f7316b3435b59be859', 'size': 10935240}, {'component_guid': '403daebc-dd7f-892c-ac37-823cf1ae6600', 'component': 'Extended Enclave', 'url': 'http://deadlystream.com/files/file/428-extended-enclave-tslrcm-add-on/', 'url_id': '6950e79e461037255afadd155f30d93dc1514a4374780e9b7a21e08ef4d86397', 'archive_name': 'Extended Enclave.2.5.2.rar', 'sha256': 'ee329c08a30fd9b0e66766e51d841127f477bc8d9acfdc5be94e10fa4933db70', 'size': 13851214}, {'component_guid': 'f88f9af8-050f-811c-814b-706cb9466483', 'component': 'Thematic Jedi Masters', 'url': 'https://deadlystream.com/files/file/2633-thematic-jedi-masters/', 'url_id': '29cdb2d6b0cfd946fd77030ad3c760c43d66b26328c275a9fc5facc4389256bf', 'archive_name': 'KOTOR2-Thematic-Jedi-Masters_v1.0.1.zip', 'sha256': '61adba64bbc1783e06565e324213a4f022a55126a5e409444a5bf4ad5d5c6930', 'size': 399797}, {'component_guid': 'ec7ead25-991c-89e5-bee8-01e1a5b8ef69', 'component': 'Better Disciple Meditation', 'url': 'https://deadlystream.com/files/file/2612-better-disciple-meditation/', 'url_id': 'c5fa4528716ca36f79512fd6a87c299de467cbd65ede79c08fd72e468d2841e4', 'archive_name': 'Better Disciple Meditation.zip', 'sha256': 'abdc7157ce333f841c5fb275c01a237c34c64f3bad3a07446a7cd1ec1f8bad73', 'size': 532304}, {'component_guid': '1a7ac764-f51b-882e-ab19-8c1a13bbbcaa', 'component': 'Bao-Dur Can Wear Heavy Armor', 'url': 'https://deadlystream.com/files/file/2189-bao-dur-can-wear-heavy-armor/', 'url_id': '248c841c6f163c3338735f6e988c8111138fd13fc7b00385db0ab7c1b899a23f', 'archive_name': 'Bao-Dur_Can_Wear_Heavy_Armor.zip', 'sha256': 'ade6ec5adb97903725048c0faa724206c9dfdf63c35bf5f45ec7029d722f05f8', 'size': 1032467}, {'component_guid': 'd636ea9c-91a4-8954-99ef-5adcfdd23582', 'component': "Better Jekk'Jekk'Tarr Thugs", 'url': 'https://deadlystream.com/files/file/2684-better-jekkjekk-tarr-thugs/', 'url_id': '6c8de3891bb8d6d561fca0a4947d77e617cb0f82a375a5d90139491cb555cd05', 'archive_name': 'Better Jekk_Jekk Tarr Thugs.zip', 'sha256': '2e921a217017ae5770b4531fbb59603bf2acdd3f77e7945264f81ab19e56009c', 'size': 9348844}, {'component_guid': '4fb6ac45-3839-8f16-9867-4f9d4fe58cfd', 'component': 'Visas Voiceover Tweak', 'url': 'http://deadlystream.com/files/file/431-nihilusvisas-scene-vo-tweak/', 'url_id': '9b1efc23c3f874e20fb5c3f8180927a736bd5c099128ec9f43fdeec0fcaebe56', 'archive_name': 'Nihilus_Visas.rar', 'sha256': '4fe110ef8cb9dcddcc327e96afd7aaece9f523099104b934b0d7a99e5387ae92', 'size': 6417}, {'component_guid': '718aff57-5340-8467-8c3e-73c082bb8fde', 'component': 'Darth Sion and the Male Exile', 'url': 'http://deadlystream.com/files/file/996-darth-sion-and-male-exile-mod/', 'url_id': '0d08b1e4e7fdb981292d5817e6d7df35febbe241d5e89a46757daf1d843f4cff', 'archive_name': 'Darth Sion and Male Exile Mod.7z', 'sha256': 'a62d6e5ee771d5f4569da5f13acadb285843c4fb0af007eaefcb94102cd5d2fa', 'size': 10165029}, {'component_guid': '079aebde-7475-8d37-8d6b-f4a9fa355ca8', 'component': 'Sith Assassins with Lightsabers', 'url': 'https://deadlystream.com/files/file/2631-sith-assassins-with-lightsabers/', 'url_id': 'a2f797d436a8b58d73d9dde735ce401a400cd5be80c2f0f293a36a52721baaf8', 'archive_name': 'SAWL_2.0.zip', 'sha256': 'f347b4c728a52dfc816134b297af5ce7fc1b506eeae88437fcb77445efb97ebf', 'size': 9379189}, {'component_guid': '3eb56efe-013e-8095-80cf-a2584ba2cf94', 'component': 'High Quality Blasters', 'url': 'http://deadlystream.com/files/file/915-high-quality-blasters/', 'url_id': 'd98ff834e36202df0c18ed33bd00b07962a8f9d375e50ac9fa6dc880dbdd5478', 'archive_name': 'TSL_High_Quality_Blasters.zip', 'sha256': 'a088f3bf81891ea2713e46e60cdf7926aa30287ed86991788fecc6745f8996c3', 'size': 23973258}, {'component_guid': '2de86e49-571f-8600-931e-5bc2ad5acebe', 'component': 'Rescaled Trandoshans', 'url': 'https://deadlystream.com/files/file/946-re-scaled-trandoshans/', 'url_id': '7c93a4c139ae8f49d206b98ac300402e2c60d45880e3eb2a61100cefc6c29037', 'archive_name': 'Rescaled Trandoshans.zip', 'sha256': 'f8939839eac387aa8e120116686baa7281b3226cdb5b941ba7d7389040e5b644', 'size': 528129}, {'component_guid': 'b83b224a-3c42-83d5-85f4-c89df4a263ae', 'component': "JC's Handmaiden Sisters", 'url': 'https://deadlystream.com/files/file/810-jcs-handmaiden-sisters/', 'url_id': '4a12ae51ab45e73a559b453293c921d77213da01c070cbb8386553c3b6164235', 'archive_name': 'KOTOR2-Handmaiden-Sisters_v3.0.0.zip', 'sha256': 'e42dbe037582156058fc3ab1e539aae6d1887f95a391ec3abe4dd21ea3cd5cf9', 'size': 1703874}, {'component_guid': 'f27d4b13-b349-8c56-b9b7-620cdc133579', 'component': 'Companion Starting Armors', 'url': 'https://deadlystream.com/files/file/2145-k2-companion-starting-armors/', 'url_id': 'f1bff49429154b2ec50b1e6d379f9875767d7e336f821850228ba5505f957f59', 'archive_name': 'K2 Companion Starting Armors 1.1.zip', 'sha256': '782bd218cb37ce5313e0ada4f86a9099475bb40913a9a3bc3a063e31323d03c4', 'size': 367758}, {'component_guid': 'e015887a-be0f-86d1-830e-92d82c8fc46c', 'component': 'Improved LS Enlightenment & DS Corruption Feats', 'url': 'https://deadlystream.com/files/file/2577-improved-ls-enlightenment-ds-corruption-feats/', 'url_id': 'b5e8bd00abb1552134512314ddb129643e2462f64ba6f09ef966d3207ebbb8ea', 'archive_name': 'Improved_Enlightenment_and_Corruption_Feats_v1_0_1.zip', 'sha256': 'b3730c98a05a12ee0a6610a57570be62ff14a7217abaef667ced9b4b541f7eed', 'size': 4370}, {'component_guid': 'ee2b251b-720d-8f69-9d38-5a56310f0bb4', 'component': 'Thematic Obscured Mausoleum Burial', 'url': 'https://deadlystream.com/files/file/2663-thematic-obscured-mausoleum-burial/', 'url_id': '5e65ede366285c74a91dd5066f871e5085fdbc42134c73f9b37d626056bdf2d9', 'archive_name': 'KOTOR2-TOMB_v1.0.3.zip', 'sha256': 'fd7348b11ae5a3214e9e56add63a285d9396bfeeb6cad1ee1e850d0731dcdaa4', 'size': 750410}, {'component_guid': '863b2f97-c8e8-8715-a1e0-2515fa70c71e', 'component': 'K2 Loading Screen Rescaled', 'url': 'https://deadlystream.com/files/file/2622-k2-loading-screen-rescaled/', 'url_id': '98ef0729f90df81a91a47338ca5fcfafd0add41ec2dad2f10979031df10de159', 'archive_name': 'load_1920x1080.7z', 'sha256': 'f99baa1e8bc70d80106abb888d2818a4e497231c9a89cf071a3736cb1679ab36', 'size': 25129861}, {'component_guid': '600d2fa2-c148-846f-bf3b-a44f10daf103', 'component': 'Upscaled Maps', 'url': 'https://www.nexusmods.com/kotor2/mods/1086', 'url_id': '5d13bd9dfa4b95bb25a2b3b2e96424791cff4efbbed5a24ab70a0dc36cd9826f', 'archive_name': 'Mod files-1086-1-0-1590189064.7z', 'sha256': 'e3c49ad8480d30bd9f936ded4f9c26cbfd5de076ba4d2ec58e72b07799ab5e5a', 'size': 44077260}, {'component_guid': 'bee5a72b-d748-8f83-8261-81758a9bfc56', 'component': 'The Sith Lords Restored Content Mod', 'url': 'https://deadlystream.com/files/file/578-tsl-restored-content-mod/', 'url_id': 'dd677fc000a4c5d13e4fe3fcd484c2fd761f017b7e4ae25abbafc1906b5e1dfa', 'archive_name': 'tslrcm2022.exe', 'sha256': '94c99c4807da4b304de6e0efed1be55e0f43d13cc5a274582ed3323ac0e2f1a6', 'size': 137947655, 'foundational': True}]
+        PROVENANCE = {'report.json': 'a6be4961c7394c465359e225273028a31ded35df5983b555f7d45a531f1c91d5', 'restore.json': '96b45e0434eca5283856a8d23dfbad5efdabbba566a1b4abb1ff11eae7261390', 'archive-map.json': '63cdcc9fd51a4a849cbd2ef20d5bd718d3874d9632dd66d052319e6a53ec1fc2', 'target-live-index.json': '6ebf0efc7f7ca3deb16efe7a636a3181641ecfd1bb9063f33d6de85952b3fb84'}
+        receipt={'schema':1,'scope':'31 exact K2 unresolved binding components plus foundational TSLRCM; inventory only',
+         'source_repository':os.environ['GITHUB_REPOSITORY'],'source_sha':os.environ['GITHUB_SHA'],
+         'source_run_id':os.environ['GITHUB_RUN_ID'],'source_run_attempt':os.environ['GITHUB_RUN_ATTEMPT'],
+         'engine_sha':'32fd39ba12c489245b1cabb0e4d064d559a021b9','source_tools_sha':'3045420a6082d82c7b39ccf58351e1704392439d',
+         'guide_sha':'67dc5fd8da6abde324c51d32eee3d04687070dd6','evidence_sha256':PROVENANCE,
+         'size_sources':'target-live-index.json; Improved Enlightenment4370bytes exact source3045420 helper pin',
+         'plan':PLAN,'fetch_results':[],'status':'started'}
+        def save(): (evidence/'provenance.json').write_text(json.dumps(receipt,indent=2))
+        save()
+        try:
+         assert os.environ['MOD_CACHE_BUCKET']=='modsync-mod-cache'
+         assert sum(x['size'] for x in PLAN)==421938073 and len(PLAN)==32
+         assert shutil.disk_usage(base).free>421938073+2*1024**3
+         sys.path.insert(0,str(Path('source/tools/modsync-ci').resolve()))
+         import seed_archives as seed
+         guide=Path('guide-input/content/k2/full.md')
+         assert seed.cache.digest(guide)=='f442bdf574031623ed577609730d887069b9bc8e38e8e2f38ecc43a7e7487d5f'
+         discovered={x['id']:x for x in seed.cache.discover([str(guide)])}
+         original=seed.refresh.rclone
+         seed.refresh.rclone=lambda *args,timeout=600:original(*args,timeout=min(timeout,600))
+         for item in PLAN:
+          try:
+           assert seed.cache.link_key(discovered[item['url_id']]['url'])==item['url']
+           local=objects/item['sha256']; started=time.monotonic()
+           with (evidence/'fetch-private.log').open('a') as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+            ok=seed.refresh.fetch('MODCACHE:modsync-mod-cache/modsync-archives/objects/'+item['sha256'],local,
+                                  '--retries','1','--max-transfer',str(item['size']+1),'--cutoff-mode','hard')
+            assert ok and seed.refresh.matches(local,item['sha256'],item['size']), 'exact object read failed'
+           receipt['fetch_results'].append({'sha256':item['sha256'],'status':'verified','seconds':time.monotonic()-started});save()
+          except Exception as exc:
+           receipt['fetch_results'].append({'sha256':item['sha256'],'status':'failed','failure_category':type(exc).__name__});save()
+         receipt['status']='fetch-complete'
+        finally: save()
+        PY_FETCH
+    - name: Inventory names and bounded text without extraction or execution
+      timeout-minutes: 80
+      run: |
+        umask 077
+        python - <<'PY_INVENTORY'
+        import hashlib, json, os, re, selectors, signal, subprocess, time
+        from pathlib import Path, PurePosixPath
+        base=Path(os.environ['RUNNER_TEMP'])/'k2-unresolved-archive-inventory';evidence=base/'evidence'
+        receipt=json.loads((evidence/'provenance.json').read_text()); result={'schema':1,'archives':[],'status':'started','failures':0}
+        env={'PATH':os.environ['PATH'],'HOME':str(base/'home'),'LC_ALL':'C.UTF-8'}
+        def save(): (evidence/'inventory.json').write_text(json.dumps(result,indent=2))
+        def capture(args,limit,seconds,allow_failure=False):
+         process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,env=env,start_new_session=True)
+         output=bytearray();deadline=time.monotonic()+seconds
+         try:
+          with selectors.DefaultSelector() as selector:
+           selector.register(process.stdout,selectors.EVENT_READ)
+           while True:
+            if time.monotonic()>deadline:raise ValueError('metadata timeout')
+            if not selector.select(1):continue
+            chunk=os.read(process.stdout.fileno(),min(65536,limit+1-len(output)))
+            if not chunk:break
+            output.extend(chunk)
+            if len(output)>limit:raise ValueError('metadata bound exceeded')
+          code=process.wait(timeout=max(.1,deadline-time.monotonic()))
+          if not allow_failure:assert code==0,'metadata reader failed'
+          return (code,bytes(output)) if allow_failure else bytes(output)
+         finally:
+          if process.poll() is None:os.killpg(process.pid,signal.SIGKILL)
+          process.wait();process.stdout.close()
+        listing_left=32*1024**2;text_left=256*1024
+        try:
+         assert receipt['status']=='fetch-complete' and len(receipt['fetch_results'])==32
+         for item in receipt['plan']:
+          try:
+           assert any(r['sha256']==item['sha256'] and r['status']=='verified' for r in receipt['fetch_results']),'object not verified'
+           path=base/'objects'/item['sha256'];started=time.monotonic()
+           with path.open('rb') as handle:assert hashlib.file_digest(handle,'sha256').hexdigest()==item['sha256']
+           assert path.stat().st_size==item['size']
+           if item.get('foundational'):
+            row={'sha256':item['sha256'],'component_guid':item['component_guid'],'foundational':True,'proof':'format/listing only; no installation or execution','readers':[]};result['archives'].append(row)
+            for reader,args in [('file',['file','-b','--',str(path)]),('7z',['7z','l','-slt','-ba','-bd','-p-','--',str(path)]),('innoextract',['innoextract','--list','--',str(path)])]:
+             code,data=capture(args,min(4*1024**2,listing_left),120,True);listing_left-=len(data)
+             row['readers'].append({'reader':reader,'exit_code':code,'output':data.decode('utf-8',errors='replace')})
+            row['seconds']=time.monotonic()-started;save()
+            assert any(x['exit_code']==0 for x in row['readers'] if x['reader'] in ('7z','innoextract')),'installer inventory unavailable'
+            continue
+           rar=Path(item['archive_name']).suffix.lower()=='.rar'
+           command=['unrar','lt','-p-','-c-',str(path)] if rar else ['7z','l','-slt','-ba','-bd','-sccUTF-8','-p-','--',str(path)]
+           raw=capture(command,min(4*1024**2,listing_left),120)
+           listing_left-=len(raw);text=raw.decode('utf-8',errors='strict')
+           row={'sha256':item['sha256'],'component_guid':item['component_guid'],'members':[],'texts':[]};result['archives'].append(row)
+           (evidence/(item['sha256']+'.slt.txt')).write_text(text)
+           seen=set()
+           if rar:
+            records=[];fields=None
+            for line in text.splitlines():
+             match=re.match(r'^\s*(Name|Type|Size|Attributes|Target|Link target):\s*(.*)$',line)
+             if not match:continue
+             key,value=match.groups()
+             if key=='Name':
+              fields={};records.append(fields)
+             if fields is not None:
+              assert key not in fields,'duplicate RAR listing field';fields[key]=value
+           else:
+            records=[]
+            for block in re.split(r'\r?\n\s*\r?\n',text.strip()):
+             fields={}
+             for line in block.splitlines():
+              assert ' = ' in line,'ambiguous listing';key,value=line.split(' = ',1);assert key not in fields;fields[key]=value
+             records.append(fields)
+           for fields in records:
+            name=fields.get('Name' if rar else 'Path');assert name and name not in seen and len(name)<=4096;seen.add(name);assert len(seen)<=100000
+            norm=PurePosixPath(name.replace('\\','/'));size=int(fields.get('Size','0'));assert size>=0
+            unsafe=norm.is_absolute() or '..' in norm.parts or ':' in name or any(ord(c)<32 for c in name)
+            kind=fields.get('Type','').lower()
+            directory=kind=='directory' if rar else fields.get('Folder')=='+' or fields.get('Attributes','').startswith('D')
+            link=(rar and kind not in ('file','directory')) or any('link' in key.casefold() or key=='Target' for key in fields) or bool(re.search(r'(?:^|\s)l[rwx-]{9}',fields.get('Attributes','')))
+            row['members'].append({'name':name,'size':size,'directory':directory,'link':link,'unsafe_path':unsafe,'encrypted':fields.get('Encrypted')=='+','attributes':fields})
+           assert row['members'],'empty listing'
+           for member in row['members']:
+            name=PurePosixPath(member['name'].replace('\\','/'));lower=name.name.lower()
+            approved=lower in ('changes.ini','namespaces.ini') or (lower.startswith('readme') and name.suffix.lower() in ('.txt','.md'))
+            if not approved or member['directory'] or member['link'] or member['unsafe_path'] or member['encrypted']:continue
+            if len(row['texts'])>=4 or not 0<member['size']<=min(65536,text_left):continue
+            if rar and any(c in member['name'] for c in '*?[]'):continue
+            command=['unrar','p','-inul','-p-','-c-',str(path),member['name']] if rar else ['7z','x','-so','-bd','-sccUTF-8','-p-','-spd','--',str(path),member['name']]
+            data=capture(command,min(65536,text_left),120)
+            assert len(data)==member['size'];text_left-=len(data)
+            row['texts'].append({'name':member['name'],'sha256':hashlib.sha256(data).hexdigest(),'text':data.decode('utf-8',errors='replace')})
+           row['seconds']=time.monotonic()-started;save()
+          except Exception as exc:
+           result['failures']+=1
+           row=next((r for r in result['archives'] if r['sha256']==item['sha256']),None)
+           if row is None:
+            row={'sha256':item['sha256'],'component_guid':item['component_guid']};result['archives'].append(row)
+           row.update(status='failed',failure_category=type(exc).__name__);save()
+         assert len(result['archives'])==32
+         result['status']='complete' if not result['failures'] else 'complete-with-failures'
+        finally:save()
+        if result['failures']:raise SystemExit(1)
+        PY_INVENTORY
+    - name: Retain encrypted metadata evidence
+      id: evidence
+      if: ${{ always() }}
+      uses: ./engine/.github/actions/retain-fullrun-evidence
+      with:
+        source: ${{ runner.temp }}/k2-unresolved-archive-inventory/evidence
+        name: k2-unresolved-archive-inventory-${{ github.run_id }}-${{ github.run_attempt }}
+        encryption-recipient: age1a5ye9zmxelf0fy6qt2t265463ts28kd0z2cjn95fjt9w3vcssvqqg5e4vg
+    - name: Cleanup only after retained evidence
+      if: ${{ always() && steps.evidence.outcome == 'success' }}
+      run: rm -rf -- "${RUNNER_TEMP:?}/k2-unresolved-archive-inventory"
