@@ -1,0 +1,300 @@
+# One-time explicit import of three reviewed missing objects; no remote writes or renewal.
+name: Bootstrap reviewed missing archive seeds
+on:
+  push:
+    branches: [ci/modsync-key-bootstrap-20261114]
+    paths: [.github/workflows/missing-seed-bootstrap.yml]
+permissions: {contents: read, actions: read}
+concurrency:
+  group: missing-seed-bootstrap
+  cancel-in-progress: false
+jobs:
+  seed:
+    if: ${{ github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: mod-cache-seed
+    steps:
+      - name: Checkout exact source tools
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+      - name: Checkout exact admitted guide
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/mod-builds
+          ref: 67dc5fd8da6abde324c51d32eee3d04687070dd6
+          path: guide-input
+          persist-credentials: false
+      - name: Prepare bounded read and archive verification tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/missing-seed-bootstrap/evidence"
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y --no-install-recommends age 7zip 7zip-rar libarchive-tools openssl >/dev/null 2>&1
+          python source/tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone" >"$RUNNER_TEMP/missing-seed-bootstrap/evidence/tool-bootstrap.log" 2>&1
+      - name: Recover only reviewed objects and seal ciphertext
+        id: seed
+        shell: bash
+        env:
+          CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
+          SEED_STAGING_RCLONE_CONF_B64: ${{ secrets.SEED_STAGING_RCLONE_CONF_B64 }}
+          RCLONE_CONFIG_MODCACHE_TYPE: s3
+          RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_MODCACHE_REGION: auto
+          RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+          RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_READ_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_READ_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: |
+          umask 077
+          python - <<'PY_ADAPTER'
+          import contextlib, hashlib, json, os, shutil, signal, subprocess, sys, tempfile, time
+          from pathlib import Path
+          
+          sys.path.insert(0, str(Path('source/tools/modsync-ci').resolve()))
+          try:
+              import seed_archives as seed
+              import artstore
+              import artstore_core as core
+          except Exception:
+              print('{"failed": 3, "status": "tool-import-failed", "verified": 0}')
+              sys.exit(1)
+          
+          EXPECTED = {'0f6e2e93589f94d200c2611156b22f1cab6d0bd09a4701cf05cbbae302e80199': [{'sha256': 'bf40814a47ce6856ec4c198e9b75e01e6b00ad91a2d9ca4486844c055e1bde8a', 'size': 494070294, 'extension': 'rar'}], '76d71b909543c384703499f96a4d954ef9190c9666fbe2b3e6feb45decedc8d1': [{'sha256': 'c1c68f78a7b1cb80b6803d9347475f5c4fc534f2be0f235ce2163cad2e3f5387', 'size': 422809388, 'extension': 'rar'}], '8209e1b3d093f6bf08155c1cd681d7f3f75d19db90ec6e405ee4db94aa2a9036': [{'sha256': 'ed3034b682c07d8bf3056a3c3769aaa82dc6275926d48a5234b014c9ee8aced8', 'size': 329786108, 'extension': 'rar'}]}
+          GUIDE_SHA = '67dc5fd8da6abde324c51d32eee3d04687070dd6'
+          base = Path(os.environ['RUNNER_TEMP']) / 'missing-seed-bootstrap'
+          base.mkdir(mode=0o700, exist_ok=True)
+          evidence = base / 'evidence'
+          evidence.mkdir(mode=0o700, exist_ok=True)
+          receipt = {'schema': 1, 'source_repository': 'kolto-labs/odyssey-ci',
+                     'source_sha': os.environ['GITHUB_SHA'], 'guide_repository': 'kolto-labs/mod-builds',
+                     'guide_sha': GUIDE_SHA, 'run_id': os.environ['GITHUB_RUN_ID'],
+                     'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'requested': len(EXPECTED),
+                     'objects': [], 'status': 'started'}
+          
+          def save():
+              (evidence / 'provenance.json').write_text(json.dumps(receipt, indent=2, sort_keys=True))
+          
+          def category(exc):
+              if isinstance(exc, seed.SeedError):
+                  text = str(exc)
+                  for needle, label in [('missing', 'missing'), ('size', 'size-mismatch'),
+                                        ('sha256', 'sha256-mismatch'), ('disk', 'insufficient-disk'),
+                                        ('type', 'archive-type-mismatch'), ('selection', 'selection-mismatch')]:
+                      if needle in text:
+                          return label
+                  return 'pin-verification-failed'
+              if isinstance(exc, subprocess.TimeoutExpired):
+                  return 'timeout'
+              if isinstance(exc, subprocess.CalledProcessError):
+                  return 'transfer-failed'
+              if isinstance(exc, OSError):
+                  return 'io-failed'
+              if isinstance(exc, (KeyError, ValueError, TypeError)):
+                  return 'configuration-or-validation-failed'
+              return 'internal-failed'
+          
+          def terminate(signum, frame):
+              raise seed.Stop('terminated')
+          
+          for signum in (signal.SIGTERM, signal.SIGINT):
+              signal.signal(signum, terminate)
+          save()
+          work = Path(tempfile.mkdtemp(prefix='private-', dir=base))
+          root = work / 'cache'
+          (root / 'objects').mkdir(parents=True, mode=0o700)
+          verified = []
+          failed = 0
+          try:
+              assert os.environ['GITHUB_REPOSITORY'] == 'kolto-labs/odyssey-ci'
+              assert os.environ['GITHUB_REF'] == 'refs/heads/ci/modsync-key-bootstrap-20261114'
+              actual = subprocess.check_output(['git', '-C', 'source', 'rev-parse', 'HEAD'], text=True).strip()
+              guide_actual = subprocess.check_output(['git', '-C', 'guide-input', 'rev-parse', 'HEAD'], text=True).strip()
+              if actual != receipt['source_sha'] or guide_actual != GUIDE_SHA:
+                  raise ValueError('identity mismatch')
+              if len(os.environ.get('CACHE_ENCRYPTION_KEY', '').encode()) < 32:
+                  raise ValueError('material key unavailable')
+              pins = seed.load_pins(seed.DEFAULT_PINS)
+              items = {item['id']: item for item in seed.cache.discover(['guide-input/content/k1/full.md'])}
+              for identity, expected in EXPECTED.items():
+                  pin = pins[identity]
+                  if [{k:o[k] for k in ('sha256','size','extension')} for o in pin['objects']] != expected:
+                      raise ValueError('pin changed')
+                  if items[identity]['url'] != pin['url']:
+                      raise ValueError('guide association changed')
+              # Configuration stays in private runner scratch; transfer diagnostics are discarded.
+              try:
+                  with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                      config_text = seed.staging_config()
+              except Exception as exc:
+                  config_text = None
+                  receipt['staging_configuration_status'] = category(exc)
+              config = seed.write_private(work / 'staging.rclone.conf', config_text) if config_text else None
+              del config_text
+              bucket = os.environ.get('MOD_CACHE_BUCKET', '')
+              remote_ready = bucket == 'modsync-mod-cache' and all(os.environ.get(name) for name in (
+                  'RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID', 'RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY',
+                  'RCLONE_CONFIG_MODCACHE_ENDPOINT'))
+              receipt['configured_sources'] = {'s3_read': remote_ready, 'staging_read': config is not None}
+              # Bound each existing helper transfer; never enable its 3-hour default here.
+              original_rclone = seed.refresh.rclone
+              def bounded_rclone(*args, timeout=600):
+                  return original_rclone(*args, timeout=min(timeout, 900))
+              seed.refresh.rclone = bounded_rclone
+              for identity in EXPECTED:
+                  pin, item = pins[identity], items[identity]
+                  row = {'pin_id': identity, 'routes': [], 'objects': EXPECTED[identity], 'status': 'failed'}
+                  receipt['objects'].append(row)
+                  for obj in pin['objects']:
+                      recovered = None
+                      if remote_ready:
+                          try:
+                              incoming = work / ('incoming-' + obj['sha256'])
+                              with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                                  ok = seed.refresh.fetch('MODCACHE:' + bucket + '/modsync-archives/objects/' + obj['sha256'], incoming,
+                                                          '--retries', '1', '--max-transfer', str(obj['size'] + 1), '--cutoff-mode', 'hard')
+                                  if not ok:
+                                      raise seed.SeedError('cached object missing')
+                                  if not seed.refresh.matches(incoming, obj['sha256'], obj['size']):
+                                      raise seed.SeedError('cached object sha256 does not match its pin')
+                                  args = __import__('types').SimpleNamespace(max_bytes=obj['size'], integrity_timeout=900)
+                                  outcome = seed.cache.import_object(item, obj['archive_name'], incoming, False, root,
+                                                                     args, None, False, obj['sha256'])
+                                  if outcome[0] != 'imported' or outcome[1]['extension'] != obj['extension']:
+                                      raise seed.SeedError('cached archive type does not match its pin')
+                                  recovered = (seed.cache.object_path(root, outcome[1]), outcome[1])
+                              row['routes'].append({'source': 's3-read', 'status': 'verified'})
+                          except Exception as exc:
+                              row['routes'].append({'source': 's3-read', 'status': category(exc)})
+                          finally:
+                              incoming.unlink(missing_ok=True)
+                      if recovered is None and config is not None:
+                          try:
+                              with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                                  recovered = seed.stage_object(obj, item, 'STAGING:' + seed.DEFAULT_STAGING_PATH,
+                                                                config, root, work / 'staging')
+                              row['routes'].append({'source': 'staging-read', 'status': 'verified'})
+                          except Exception as exc:
+                              row['routes'].append({'source': 'staging-read', 'status': category(exc)})
+                      if recovered is None:
+                          failed += 1
+                          break
+                      path, stored = recovered
+                      entry = seed.build_entry(item, [stored], time.time())
+                      if not seed.cache.is_pinned(item, entry, pins) or not seed.cache.objects_match_selection(item, entry):
+                          raise seed.SeedError('verified object selection mismatch')
+                      verified.append((path, obj['sha256']))
+                      row['status'] = 'verified'
+                  save()
+              if verified:
+                  with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                      staged = artstore.stage(verified, base / 'staged', index=core.new_index(), max_packs=1)
+                  if len(staged['packs']) != 1 or len(staged['blobs']) != len(verified) or staged['skipped'] or staged['deferred']:
+                      raise ValueError('incomplete encrypted seed pack')
+                  pack = staged['packs'][0]
+                  pack_name = 'artstore-pack-' + receipt['run_id'] + '-' + receipt['run_attempt'] + '-seed'
+                  index_name = 'artstore-index-' + receipt['run_id'] + '-' + receipt['run_attempt'] + '-seed'
+                  index = core.load_index(staged['index_path'])
+                  index['packs'][pack_name] = index['packs'].pop(pack['name'])
+                  for blob in index['blobs'].values():
+                      for part in blob['parts']:
+                          if part['pack'] != pack['name']:
+                              raise ValueError('unexpected pack association')
+                          part['pack'] = pack_name
+                          ciphertext = Path(pack['dir']) / (part['stored_sha256'] + '.part')
+                          if ciphertext.stat().st_size != part['stored_size'] or seed.cache.digest(ciphertext) != part['stored_sha256']:
+                              raise ValueError('ciphertext verification failed')
+                  output = base / 'ciphertext'
+                  output.mkdir(mode=0o700)
+                  shutil.move(pack['dir'], output / pack_name)
+                  index_dir = output / index_name
+                  index_dir.mkdir(mode=0o700)
+                  core.dump_index(index, index_dir / 'index.json')
+                  receipt['ciphertext'] = {'pack_name': pack_name, 'index_name': index_name,
+                                           'verified_objects': len(verified), 'stored_bytes': pack['size']}
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+                      stream.write('pack_path=' + str(output / pack_name) + '\nindex_path=' + str(index_dir) + '\n')
+              receipt['verified'] = len(verified)
+              receipt['failed'] = failed
+              receipt['status'] = 'complete' if len(verified) == len(EXPECTED) and failed == 0 else 'incomplete'
+          except seed.Stop:
+              receipt['status'] = 'interrupted'
+              failed = max(failed, 1)
+          except BaseException as exc:
+              receipt['status'] = 'failed'
+              receipt['failure_category'] = category(exc)
+              failed = max(failed, 1)
+          finally:
+              save()
+              shutil.rmtree(work, ignore_errors=True)
+          print(json.dumps({'requested': len(EXPECTED), 'verified': len(verified),
+                            'failed': failed, 'status': receipt['status']}, sort_keys=True))
+          sys.exit(0 if receipt['status'] == 'complete' else 1)
+          PY_ADAPTER
+      - name: Upload only authenticated seed ciphertext members
+        id: pack
+        if: ${{ !cancelled() && steps.seed.outputs.pack_path != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-seed
+          path: ${{ steps.seed.outputs.pack_path }}/*.part
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+      - name: Upload only verified seed index
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' && steps.seed.outputs.index_path != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: artstore-index-${{ github.run_id }}-${{ github.run_attempt }}-seed
+          path: ${{ steps.seed.outputs.index_path }}/index.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Encrypt bounded provenance and failure evidence
+        id: evidence
+        if: ${{ always() }}
+        shell: bash
+        env:
+          DIAGNOSTICS_ENCRYPTION_RECIPIENT: age1a5ye9zmxelf0fy6qt2t265463ts28kd0z2cjn95fjt9w3vcssvqqg5e4vg
+          SEED_OUTCOME: ${{ steps.seed.outcome }}
+          PACK_OUTCOME: ${{ steps.pack.outcome }}
+        run: |
+          set -euo pipefail
+          umask 077
+          base="$RUNNER_TEMP/missing-seed-bootstrap"
+          mkdir -p "$base/evidence" "$base/encrypted-evidence"
+          python - <<'PY_OUTCOME'
+          import json, os, pathlib
+          evidence = pathlib.Path(os.environ['RUNNER_TEMP']) / 'missing-seed-bootstrap' / 'evidence'
+          receipt = {'seed_outcome': os.environ['SEED_OUTCOME'], 'pack_outcome': os.environ['PACK_OUTCOME'],
+                     'source_sha': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID']}
+          (evidence / 'step-outcomes.json').write_text(json.dumps(receipt, sort_keys=True))
+          PY_OUTCOME
+          if ! command -v age >/dev/null; then
+            sudo apt-get update -qq >/dev/null 2>&1
+            sudo apt-get install -y --no-install-recommends age >/dev/null 2>&1
+          fi
+          tar -C "$base/evidence" -czf - . | age -r "$DIAGNOSTICS_ENCRYPTION_RECIPIENT" -o "$base/encrypted-evidence/evidence.tar.gz.age"
+          echo "path=$base/encrypted-evidence" >> "$GITHUB_OUTPUT"
+      - name: Upload encrypted evidence only
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: missing-seed-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.evidence.outputs.path }}/*.age
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove private runner scratch
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python - <<'PY_CLEANUP'
+          import os, pathlib, shutil
+          base = pathlib.Path(os.environ['RUNNER_TEMP']) / 'missing-seed-bootstrap'
+          shutil.rmtree(base, ignore_errors=True)
+          PY_CLEANUP
