@@ -1,0 +1,250 @@
+# Isolated actual vendor execution; no native-lane or full-guide success claim.
+name: Probe exact TSLRCM vendor runtime only
+'on':
+  push:
+    branches:
+    - ci/modsync-key-bootstrap-20261114
+    paths:
+    - .github/workflows/tslrcm-vendor-runtime-probe.yml
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: tslrcm-vendor-runtime-probe
+  cancel-in-progress: false
+jobs:
+  probe:
+    if: ${{ github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114'
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: mod-cache-seed
+    steps:
+    - name: Checkout pinned source
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: kolto-labs/odyssey-ci
+        ref: 3045420a6082d82c7b39ccf58351e1704392439d
+        path: source
+        persist-credentials: false
+    - name: Checkout pinned engine
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: kolto-labs/ModSync.rs
+        ref: 32fd39ba12c489245b1cabb0e4d064d559a021b9
+        path: engine
+        persist-credentials: false
+    - name: Checkout pinned guide
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: kolto-labs/mod-builds
+        ref: 67dc5fd8da6abde324c51d32eee3d04687070dd6
+        path: guide-input
+        persist-credentials: false
+    - name: Prepare isolated runtime and dependencies
+      timeout-minutes: 20
+      shell: bash
+      run: |
+        set -euo pipefail
+        umask 077
+        base="$RUNNER_TEMP/tslrcm-vendor-runtime"
+        mkdir -p "$base/evidence" "$base/archives" "$base/home" "$base/wine"
+        sudo dpkg --add-architecture i386
+        sudo timeout 300 apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+        sudo timeout 600 apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends wine wine32:i386 wine64 xvfb xauth xdotool age python3-venv zstd openssl
+        python -m venv "$base/venv"
+        "$base/venv/bin/pip" --disable-pip-version-check install 'pykotor==2.3.12'
+        python source/tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone" >"$base/evidence/reader-bootstrap.log" 2>&1
+    - name: Recover exact source-owned verified game baseline
+      timeout-minutes: 45
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
+      run: |
+        set -euo pipefail
+        umask 077
+        python - <<'PY_BASELINE'
+        import datetime,json,os,subprocess,sys,urllib.request
+        from pathlib import Path
+        base=Path(os.environ['RUNNER_TEMP'])/'tslrcm-vendor-runtime'; evidence=base/'evidence'
+        assert os.environ['GITHUB_REPOSITORY']=='kolto-labs/odyssey-ci'
+        url='https://api.github.com/repos/kolto-labs/odyssey-ci/actions/artifacts/12574050387'
+        request=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
+        with urllib.request.urlopen(request,timeout=60) as response: item=json.load(response)
+        assert item['id']==12574050387 and item['name']=='game-k2-sealed' and item['size_in_bytes']==3158273346 and item['expired'] is False
+        assert datetime.datetime.fromisoformat(item['expires_at'].replace('Z','+00:00'))>datetime.datetime.now(datetime.timezone.utc)
+        (evidence/'baseline-artifact.json').write_text(json.dumps(item,indent=2))
+        env={k:os.environ[k] for k in ('PATH','RUNNER_TEMP','GITHUB_REPOSITORY','GITHUB_TOKEN','CACHE_ENCRYPTION_KEY') if k in os.environ}
+        env.update(HOME=str(base/'home'),PYTHONDONTWRITEBYTECODE='1')
+        command=[sys.executable,'engine/tools/modsync-ci/fullrun_baseline.py','--game','k2','--seal-dir',str(base/'sealed'),'--game-dir',str(base/'game'),'--legacy-repository','kolto-labs/odyssey-ci','--consumer','--required']
+        with (evidence/'baseline.log').open('w') as log: result=subprocess.run(command,env=env,stdout=log,stderr=subprocess.STDOUT,timeout=2400)
+        assert result.returncode==0
+        assert 'baseline verified: current artifact 12574050387' in (evidence/'baseline.log').read_text()
+        # Baseline receipt was verified before normalization; preserve the original archive.
+        subprocess.run([sys.executable,'engine/tools/modsync-ci/game_cache.py','normalize-case','--game','k2','--game-dir',str(base/'game'),'--label','vendor-probe'],env={k:v for k,v in env.items() if k not in ('GITHUB_TOKEN','CACHE_ENCRYPTION_KEY')},check=True,timeout=300,stdout=(evidence/'normalize.log').open('w'),stderr=subprocess.STDOUT)
+        PY_BASELINE
+    - name: GET only exact reviewed vendor executable
+      timeout-minutes: 15
+      shell: bash
+      env:
+        RCLONE_CONFIG_MODCACHE_TYPE: s3
+        RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+        RCLONE_CONFIG_MODCACHE_REGION: auto
+        RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+        RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+        RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
+        RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+        MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+      run: |
+        set -euo pipefail
+        umask 077
+        python - <<'PY_GET'
+        import contextlib,hashlib,json,os,sys
+        from pathlib import Path
+        sys.path.insert(0,str(Path('source/tools/modsync-ci').resolve()))
+        with open(os.devnull,'w') as quiet,contextlib.redirect_stdout(quiet),contextlib.redirect_stderr(quiet): import seed_archives as seed
+        assert os.environ['MOD_CACHE_BUCKET']=='modsync-mod-cache'
+        base=Path(os.environ['RUNNER_TEMP'])/'tslrcm-vendor-runtime'
+        sha='94c99c4807da4b304de6e0efed1be55e0f43d13cc5a274582ed3323ac0e2f1a6'; size=137947655
+        path=base/'archives/tslrcm2022.exe'
+        with open(os.devnull,'w') as quiet,contextlib.redirect_stdout(quiet),contextlib.redirect_stderr(quiet):
+         ok=seed.refresh.fetch('MODCACHE:modsync-mod-cache/modsync-archives/objects/'+sha,path,'--retries','1','--max-transfer',str(size+1),'--cutoff-mode','hard')
+        assert ok and path.is_file() and not path.is_symlink() and path.stat().st_size==size
+        with path.open('rb') as stream: assert hashlib.file_digest(stream,'sha256').hexdigest()==sha
+        (base/'evidence/object.json').write_text(json.dumps({'sha256':sha,'bytes':size,'filename':path.name,'url':'https://deadlystream.com/files/file/578-tsl-restored-content-mod/','proof':'exact GET object independently rehashed; no installer execution in credential-bearing step'},indent=2))
+        PY_GET
+    - name: Project one original guide component and unchanged reviewed operation
+      timeout-minutes: 5
+      shell: bash
+      run: |
+        set -euo pipefail
+        umask 077
+        python - <<'PY_PROJECT'
+        import hashlib,json,os,re,struct,subprocess
+        from pathlib import Path
+        base=Path(os.environ['RUNNER_TEMP'])/'tslrcm-vendor-runtime'; evidence=base/'evidence'
+        def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+        for path,sha in [('source','3045420a6082d82c7b39ccf58351e1704392439d'),('engine','32fd39ba12c489245b1cabb0e4d064d559a021b9'),('guide-input','67dc5fd8da6abde324c51d32eee3d04687070dd6')]: assert subprocess.check_output(['git','-C',path,'rev-parse','HEAD'],text=True).strip()==sha
+        original=Path('guide-input/content/k2/full.md'); text=original.read_text(); whole='f442bdf574031623ed577609730d887069b9bc8e38e8e2f38ecc43a7e7487d5f'; assert digest(original)==whole
+        matches=list(re.finditer(r'^### TSLRCM\n',text,re.M)); assert len(matches)==1
+        start=matches[0].start(); following=re.search(r'^#{1,3} ',text[matches[0].end():],re.M); assert following
+        end=matches[0].end()+following.start(); block=text[start:end]
+        projected=base/'guide.md'; projected.write_text('# Isolated vendor runtime probe\n\n## Mod List\n\n'+block)
+        source_plan=Path('engine/tools/modsync-ci/fixtures/ci/k2-manual-plan.json'); plan=json.loads(source_plan.read_text()); assert plan['guide_sha256']==whole
+        selected=[s for s in plan['steps'] if s['source_heading']=='### TSLRCM']; assert len(selected)==1 and selected[0]['id']=='step-002' and 'omit' not in selected[0] and len(selected[0]['operations'])==1
+        op=selected[0]['operations'][0]; assert op['sha256']=='94c99c4807da4b304de6e0efed1be55e0f43d13cc5a274582ed3323ac0e2f1a6' and op['type']=='patcher'
+        projection={'guide_sha256':digest(projected),'archive_sha256':{'{archives}/tslrcm2022.exe':op['sha256']},'steps':selected,'supplemental_sections':[]}
+        (base/'plan.json').write_text(json.dumps(projection,indent=2)); assert json.loads((base/'plan.json').read_text())['steps']==selected
+        (evidence/'projection.json').write_text(json.dumps({'scope':'one original TSLRCM component and unchanged manual operation; no full install or native-lane proof','source_guide_sha256':whole,'source_plan_sha256':digest(source_plan),'projected_guide_sha256':digest(projected),'projected_plan_sha256':digest(base/'plan.json'),'original_component_guid':'bee5a72b-d748-8f83-8261-81758a9bfc56','guide_block_start_character':start,'guide_block_end_character':end,'guide_block_sha256':hashlib.sha256(block.encode()).hexdigest(),'original_step':selected[0],'operation_unchanged':True},indent=2))
+        # Mirror the checked-in detector's exact filename evidence; this is no executable-version attestation.
+        game=base/'game'; source=Path('engine/src/game.rs'); code=source.read_text(); names=re.search(r'const ASPYR: &\[&str\] = &\[(.*?)\n\];',code,re.S); assert names
+        paths=re.findall(r'"([^"]+)"',names[1]); assert len(paths)>0
+        matches=[p for p in paths if (game/p).exists()]
+        exe=game/'swkotor2.exe'
+        with exe.open('rb') as stream:
+         dos=stream.read(64); assert dos[:2]==b'MZ'; offset=struct.unpack_from('<I',dos,0x3c)[0]; assert 64<=offset<exe.stat().st_size-24
+         stream.seek(offset); header=stream.read(24); assert header[:4]==b'PE\\0\\0'.replace(b'\\0',b'\0'); flags=struct.unpack_from('<H',header,22)[0]
+        (evidence/'baseline-platform.json').write_text(json.dumps({'game_rs_sha256':digest(source),'aspyr_checks':paths,'aspyr_matches':matches,'aspyr_match_count':len(matches),'aspyr_total':len(paths),'aspyr_path_threshold_met':len(matches)*10>=len(paths)*7,'executable_sha256':digest(exe),'executable_bytes':exe.stat().st_size,'pe_characteristics':flags,'large_address_aware':bool(flags&0x20),'caveat':'Path detector evidence and PE flag only; does not prove vendor build/version, unmodified executable or 3C-FD application.'},indent=2))
+        PY_PROJECT
+    - name: Run real original vendor recipe without acquisition credentials
+      timeout-minutes: 80
+      shell: bash
+      run: |
+        set -euo pipefail
+        umask 077
+        python - <<'PY_RUNTIME'
+        import hashlib,json,os,subprocess,time
+        from pathlib import Path
+        base=Path(os.environ['RUNNER_TEMP'])/'tslrcm-vendor-runtime'; evidence=base/'evidence'
+        env={'PATH':'/usr/bin:/bin','HOME':str(base/'home'),'WINEPREFIX':str(base/'wine'),'WINEDEBUG':'-all','LC_ALL':'C.UTF-8','TMPDIR':str(base/'home'),'PYTHONDONTWRITEBYTECODE':'1'}
+        command=['/usr/bin/xvfb-run','-a',str(base/'venv/bin/python'),str(Path('engine/tools/modsync-ci/manual.py').resolve()),'--guide',str(base/'guide.md'),'--plan',str(base/'plan.json'),'--game-dir',str(base/'game'),'--archives',str(base/'archives'),'--work-dir',str(base/'manual'),'--report',str(evidence/'manual-report.json'),'--step-timeout','2700']
+        receipt={'scope':'isolated actual vendor runtime; no native CLI/GUI or full-guide completion claim','command':command,'started':time.time(),'credential_environment_keys':[], 'status':'started'}
+        (evidence/'runtime.json').write_text(json.dumps(receipt,indent=2))
+        try:
+         with (evidence/'runtime.log').open('w') as log: result=subprocess.run(command,env=env,stdout=log,stderr=subprocess.STDOUT,timeout=3900)
+         receipt['manual_exit_code']=result.returncode
+        finally:
+         # Finish all dedicated-prefix writers before copying installer evidence or lifecycle cleanup.
+         receipt['wine_cleanup']=[]
+         for arg in ('-k','-w'):
+          with (evidence/'wine-cleanup.log').open('a') as log: stopped=subprocess.run(['/usr/bin/wineserver',arg],env=env,stdout=log,stderr=subprocess.STDOUT,timeout=120)
+          receipt['wine_cleanup'].append({'argument':arg,'exit_code':stopped.returncode})
+         receipt['finished']=time.time()
+         (evidence/'runtime.json').write_text(json.dumps(receipt,indent=2))
+        assert all(row['exit_code']==0 for row in receipt['wine_cleanup'])
+        assert receipt['manual_exit_code']==0
+        report=json.loads((evidence/'manual-report.json').read_text()); assert report['status']=='complete' and report['partial'] is False and report['omitted_steps']==[] and len(report['steps'])==1 and report['steps'][0]['status']=='complete'
+        plan=json.loads((base/'plan.json').read_text()); operation=plan['steps'][0]['operations'][0]
+        observed={}
+        for token,expected in operation['expected_files'].items():
+         assert token.startswith('{game}/')
+         path=base/'game'/token[len('{game}/'):]
+         assert path.is_file() and not path.is_symlink()
+         with path.open('rb') as stream: actual=hashlib.file_digest(stream,'sha256').hexdigest()
+         assert actual==expected
+         observed[token]={'sha256':actual,'bytes':path.stat().st_size}
+        before=json.loads((base/'manual/step-0001/before.json').read_text()); after=json.loads((base/'manual/step-0001/after.json').read_text()); assert before!=after
+        # A new credential-free venv process rehashes the entire live tree using production manifest().
+        observed_path=evidence/'post-quiescence-game-manifest.json'
+        manifest_code="import json,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); import manual; result=manual.manifest(Path(sys.argv[2])); Path(sys.argv[3]).write_text(json.dumps(result,sort_keys=True))"
+        subprocess.run([str(base/'venv/bin/python'),'-c',manifest_code,str(Path('engine/tools/modsync-ci').resolve()),str(base/'game'),str(observed_path)],env=env,check=True,timeout=600)
+        actual_manifest=json.loads(observed_path.read_text())
+        assert actual_manifest==after, 'Live game changed after production after.json; vendor writers or unexpected mutation remain'
+        receipt['post_quiescence_entire_game_manifest_matches_production_after']=True
+        receipt['post_quiescence_game_manifest_sha256']=hashlib.sha256(observed_path.read_bytes()).hexdigest()
+        receipt['post_quiescence_game_manifest_entries']=len(actual_manifest)
+        receipt['observed_expected_outputs_after_wine_quiescence']=observed
+        receipt['changed_game_manifest_after_production_snapshot']=True
+        receipt.update(status='vendor_recipe_verified',verification='production manual.py enforced zero original process exit, fresh success log, reviewed markers/no failure regex, expected output hashes, changed game manifest and snapshot verification; English/destination selected by unchanged reviewed argv, inspect setup log for actual vendor choices')
+        (evidence/'runtime.json').write_text(json.dumps(receipt,indent=2))
+        PY_RUNTIME
+    - name: Retain bounded diagnostics after prefix quiescence
+      if: ${{ success() || failure() }}
+      timeout-minutes: 5
+      shell: bash
+      run: |
+        set -euo pipefail
+        umask 077
+        python - <<'PY_RETAIN'
+        import os,shutil,subprocess
+        from pathlib import Path
+        base=Path(os.environ['RUNNER_TEMP'])/'tslrcm-vendor-runtime'; evidence=base/'evidence'; evidence.mkdir(parents=True,exist_ok=True)
+        env={'PATH':'/usr/bin:/bin','HOME':str(base/'home'),'WINEPREFIX':str(base/'wine'),'WINEDEBUG':'-all'}
+        if (base/'wine').is_dir():
+         for arg in ('-k','-w'):
+          with (evidence/'wine-cleanup.log').open('a') as log: subprocess.run(['/usr/bin/wineserver',arg],env=env,stdout=log,stderr=subprocess.STDOUT,timeout=120,check=True)
+        # Explicit text/manifest allowlist only. Never recurse through the game, snapshot or prefix.
+        items=[base/'manual/step-0001/operations.log',base/'manual/step-0001/before.json',base/'manual/step-0001/after.json',base/'manual/extract/step-002-tslrcm-setup.log']
+        items+=list((base/'manual/step-0001').glob('installer-log-*'))
+        for index,path in enumerate(items):
+         if path.is_file() and not path.is_symlink():
+          assert path.stat().st_size<=32*1024**2
+          shutil.copyfile(path,evidence/(str(index)+'-'+path.name))
+        PY_RETAIN
+    - name: Encrypt private evidence only
+      id: evidence
+      if: ${{ success() || failure() }}
+      uses: ./engine/.github/actions/retain-fullrun-evidence
+      with:
+        source: ${{ runner.temp }}/tslrcm-vendor-runtime/evidence
+        name: tslrcm-vendor-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+        encryption-recipient: age1a5ye9zmxelf0fy6qt2t265463ts28kd0z2cjn95fjt9w3vcssvqqg5e4vg
+    - name: Remove disposable payloads after final prefix quiescence
+      if: ${{ always() && steps.evidence.outcome == 'success' }}
+      timeout-minutes: 5
+      shell: bash
+      run: |
+        set -euo pipefail
+        python - <<'PY_CLEAN'
+        import os,shutil,subprocess
+        from pathlib import Path
+        base=Path(os.environ['RUNNER_TEMP'])/'tslrcm-vendor-runtime'
+        assert base.parent==Path(os.environ['RUNNER_TEMP']) and not base.is_symlink()
+        if (base/'wine').is_dir():
+         env={'PATH':'/usr/bin:/bin','HOME':str(base/'home'),'WINEPREFIX':str(base/'wine')}
+         for arg in ('-k','-w'): subprocess.run(['/usr/bin/wineserver',arg],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=120,check=True)
+        for name in ('game','sealed','archives','manual','home','wine','venv'):
+         path=base/name
+         if path.exists(): assert not path.is_symlink(); shutil.rmtree(path)
+        PY_CLEAN
