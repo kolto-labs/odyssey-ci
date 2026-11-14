@@ -1,0 +1,225 @@
+# One-time source-owned GET-only inventory; archive payloads never enter the evidence upload.
+name: Audit current guide archive associations
+on:
+  push:
+    branches: [ci/modsync-key-bootstrap-20261114]
+    paths: [.github/workflows/archive-association-coverage.yml]
+permissions: {contents: read}
+concurrency:
+  group: archive-association-coverage
+  cancel-in-progress: false
+jobs:
+  inventory:
+    if: ${{ github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: mod-cache-seed
+    steps:
+      - name: Checkout exact source tools
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+      - name: Checkout exact admitted guide
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/mod-builds
+          ref: 67dc5fd8da6abde324c51d32eee3d04687070dd6
+          path: guide-input
+          persist-credentials: false
+      - name: Prepare GET-only manifest reader and public-key encryption
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/archive-association-coverage/evidence"
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y --no-install-recommends age >/dev/null 2>&1
+          python source/tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone" >"$RUNNER_TEMP/archive-association-coverage/evidence/reader-bootstrap.log" 2>&1
+      - name: Read source manifest and export sanitized guide association coverage
+        id: inventory
+        shell: bash
+        env:
+          RCLONE_CONFIG_MODCACHE_TYPE: s3
+          RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_MODCACHE_REGION: auto
+          RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+          RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: |
+          umask 077
+          python - <<'PY_COVERAGE'
+          import contextlib, json, os, re, shutil, signal, subprocess, sys, tempfile
+          from pathlib import Path
+          
+          GUIDE_SHA = '67dc5fd8da6abde324c51d32eee3d04687070dd6'
+          base = Path(os.environ['RUNNER_TEMP']) / 'archive-association-coverage'
+          evidence = base / 'evidence'
+          evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+          receipt = {'schema_version': 1, 'source_repository': 'kolto-labs/odyssey-ci',
+                     'source_sha': os.environ['GITHUB_SHA'], 'source_run_id': os.environ['GITHUB_RUN_ID'],
+                     'source_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                     'guide_repository': 'kolto-labs/mod-builds', 'guide_sha': GUIDE_SHA, 'status': 'started',
+                     'proof': 'source manifest association metadata only; no payload object downloads or byte availability proof'}
+          
+          def save():
+              (evidence / 'provenance.json').write_text(json.dumps(receipt, indent=2, sort_keys=True))
+          
+          def stop(signum, frame):
+              raise InterruptedError('terminated')
+          
+          for signum in (signal.SIGINT, signal.SIGTERM):
+              signal.signal(signum, stop)
+          save()
+          work = Path(tempfile.mkdtemp(prefix='private-', dir=base))
+          try:
+              if (os.environ['GITHUB_REPOSITORY'] != 'kolto-labs/odyssey-ci'
+                      or os.environ['GITHUB_REF'] != 'refs/heads/ci/modsync-key-bootstrap-20261114'):
+                  raise ValueError('source scope mismatch')
+              if subprocess.check_output(['git', '-C', 'source', 'rev-parse', 'HEAD'], text=True).strip() != receipt['source_sha']:
+                  raise ValueError('source identity mismatch')
+              if subprocess.check_output(['git', '-C', 'guide-input', 'rev-parse', 'HEAD'], text=True).strip() != GUIDE_SHA:
+                  raise ValueError('guide identity mismatch')
+              sys.path.insert(0, str(Path('source/tools/modsync-ci').resolve()))
+              with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                  import seed_archives as seed
+              guides = {game: 'guide-input/content/' + game + '/full.md' for game in ('k1', 'k2')}
+              receipt['guide_sha256'] = {game: seed.cache.digest(Path(path)) for game, path in guides.items()}
+              items = seed.cache.discover(list(guides.values()))
+              if not items or len(items) > 2000:
+                  raise ValueError('guide association count invalid')
+              pins = seed.load_pins(seed.DEFAULT_PINS)
+              required = ('RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID', 'RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY',
+                          'RCLONE_CONFIG_MODCACHE_ENDPOINT', 'MOD_CACHE_BUCKET')
+              if os.environ.get('MOD_CACHE_BUCKET') != 'modsync-mod-cache' or not all(os.environ.get(name) for name in required):
+                  raise ValueError('source read configuration unavailable')
+              original_rclone = seed.refresh.rclone
+              def bounded_rclone(*args, timeout=600):
+                  return original_rclone(*args, timeout=min(timeout, 300))
+              seed.refresh.rclone = bounded_rclone
+              manifest_path = work / 'manifest.json'
+              # Exactly one bounded remote GET: no payload object lookup, sync or upload.
+              with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                  ok = seed.refresh.fetch('MODCACHE:modsync-mod-cache/modsync-archives/manifest.json', manifest_path,
+                                          '--retries', '1', '--max-transfer', '16M', '--cutoff-mode', 'hard')
+              if not ok or not manifest_path.is_file() or manifest_path.stat().st_size > 16 * 1024 * 1024:
+                  raise ValueError('source manifest unavailable or oversized')
+              receipt['source_manifest_sha256'] = seed.cache.digest(manifest_path)
+              document = json.loads(manifest_path.read_text(encoding='utf-8'))
+              if (not isinstance(document, dict) or type(document.get('schema')) is not int or document['schema'] != 1
+                      or not isinstance(document.get('entries'), dict)):
+                  raise ValueError('source manifest schema invalid')
+              allowed = ['Optional Install Assistant - Quicker TSLPatching::Quicker TSLPatching',
+                         'Optional Widescreen & Extended Widescreen Support Mods::Remastered Cutscenes',
+                         'Enhanced Widescreen Support Mods::K2 Cutscenes Rescaled']
+              rows = []
+              total_objects = 0
+              for item in items:
+                  if seed.cache.key_for(item['url']) != item['id']:
+                      raise ValueError('guide URL identity mismatch')
+                  policy = seed.cache.uncached_reason(item)
+                  classification = 'required-cache-input'
+                  if policy:
+                      steps, outside = seed.cache.skippable_steps(item, allowed)
+                      classification = 'approved-uncached-policy' if steps and not outside else 'uncached-policy-not-approved'
+                  row = {'id': item['id'], 'provider': item['provider'],
+                         'games': [game for game, path in guides.items() if path in item['guides']],
+                         'policy_classification': classification, 'reviewed_pin': item['id'] in pins,
+                         'association_status': 'missing', 'objects_match_selection': False, 'objects': []}
+                  entry = document['entries'].get(item['id'])
+                  if entry is not None:
+                      objects = seed.cache.entry_objects(entry)
+                      row['association_status'] = 'present' if objects else 'invalid-object-metadata'
+                      if len(objects) > 1000:
+                          raise ValueError('association object count exceeds bound')
+                      row['objects_match_selection'] = bool(objects and seed.cache.objects_match_selection(item, entry))
+                      row['matches_reviewed_pin'] = bool(item['id'] in pins and seed.same_objects(entry, pins[item['id']]))
+                      selectors = seed.cache.reviewed_selectors(item) or []
+                      for obj in objects:
+                          total_objects += 1
+                          if total_objects > 10000:
+                              raise ValueError('total association object count exceeds bound')
+                          digest, size, extension, name = (obj.get(key) for key in ('sha256', 'size', 'extension', 'archive_name'))
+                          if (not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)
+                                  or type(size) is not int or not 0 < size <= seed.cache.MAX_LINK_BYTES
+                                  or extension not in seed.cache.PIN_EXTENSIONS or not isinstance(name, str)
+                                  or seed.cache.safe_archive_name(name, extension) != name):
+                              row['association_status'] = 'invalid-object-metadata'
+                              continue
+                          safe = {'sha256': digest, 'size': size, 'extension': extension, 'archive_name': name}
+                          # Optional labels are copied only when they are current reviewed
+                          # selection labels (or the already checked archive basename).
+                          approved_names = {selector['file'] for selector in selectors} | {name}
+                          if isinstance(obj.get('listed_name'), str) and obj['listed_name'] in approved_names:
+                              safe['listed_name'] = obj['listed_name']
+                          if 'row' in obj:
+                              value = obj['row']
+                              if value is None or isinstance(value, str) and re.fullmatch(r'[0-9]{1,12}', value):
+                                  safe['row'] = value
+                          row['objects'].append(safe)
+                  rows.append(row)
+              coverage = {'schema_version': 1, 'entries': rows,
+                          'unique_object_hashes': len({obj['sha256'] for row in rows for obj in row['objects']}),
+                          'proof': 'join these object hashes to the target retained index; index membership does not prove decryption or archive validity'}
+              encoded = json.dumps(coverage, indent=2, sort_keys=True)
+              if len(encoded.encode('utf-8')) > 16 * 1024 * 1024:
+                  raise ValueError('coverage metadata output exceeds bound')
+              (evidence / 'association-coverage.json').write_text(encoded)
+              receipt.update(status='complete', guide_items=len(rows), source_manifest_entries=len(document['entries']),
+                             associated_items=sum(row['association_status']=='present' for row in rows),
+                             missing_items=sum(row['association_status']=='missing' for row in rows),
+                             invalid_items=sum(row['association_status']=='invalid-object-metadata' for row in rows),
+                             unique_object_hashes=coverage['unique_object_hashes'],
+                             coverage_sha256=seed.cache.digest(evidence / 'association-coverage.json'))
+          except BaseException as exc:
+              receipt.update(status='failed', failure_category=type(exc).__name__)
+          finally:
+              save()
+              shutil.rmtree(work, ignore_errors=True)
+          print(json.dumps({key: receipt[key] for key in ('status', 'guide_items', 'associated_items', 'missing_items', 'invalid_items') if key in receipt}, sort_keys=True))
+          sys.exit(0 if receipt['status'] == 'complete' else 1)
+          PY_COVERAGE
+      - name: Encrypt archive metadata and provenance only
+        id: evidence
+        if: ${{ always() }}
+        shell: bash
+        env:
+          DIAGNOSTICS_ENCRYPTION_RECIPIENT: age1a5ye9zmxelf0fy6qt2t265463ts28kd0z2cjn95fjt9w3vcssvqqg5e4vg
+          INVENTORY_OUTCOME: ${{ steps.inventory.outcome }}
+        run: |
+          set -euo pipefail
+          umask 077
+          base="$RUNNER_TEMP/archive-association-coverage"
+          mkdir -p "$base/evidence" "$base/encrypted"
+          python - <<'PY_OUTCOME'
+          import json, os, pathlib
+          evidence = pathlib.Path(os.environ['RUNNER_TEMP']) / 'archive-association-coverage' / 'evidence'
+          (evidence / 'step-outcome.json').write_text(json.dumps({
+              'inventory_outcome': os.environ['INVENTORY_OUTCOME'], 'source_sha': os.environ['GITHUB_SHA'],
+              'source_run_id': os.environ['GITHUB_RUN_ID']}, sort_keys=True))
+          PY_OUTCOME
+          if ! command -v age >/dev/null; then
+            sudo apt-get update -qq >/dev/null 2>&1
+            sudo apt-get install -y --no-install-recommends age >/dev/null 2>&1
+          fi
+          tar -C "$base/evidence" -czf - . | age -r "$DIAGNOSTICS_ENCRYPTION_RECIPIENT" -o "$base/encrypted/association-coverage.tar.gz.age"
+          echo "path=$base/encrypted/association-coverage.tar.gz.age" >> "$GITHUB_OUTPUT"
+      - name: Upload only encrypted metadata
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: archive-association-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.evidence.outputs.path }}
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove private source scratch
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python - <<'PY_CLEANUP'
+          import os, pathlib, shutil
+          shutil.rmtree(pathlib.Path(os.environ['RUNNER_TEMP']) / 'archive-association-coverage', ignore_errors=True)
+          PY_CLEANUP
