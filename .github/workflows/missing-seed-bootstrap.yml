@@ -49,6 +49,9 @@ jobs:
           RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
           RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_READ_ACCESS_KEY_ID }}
           RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_READ_SECRET_ACCESS_KEY }}
+          # Existing source writer pair targets the same endpoint/bucket. This adapter only reads.
+          SOURCE_MOD_CACHE_S3_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+          SOURCE_MOD_CACHE_S3_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
           RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
           MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
         run: |
@@ -77,6 +80,18 @@ jobs:
                      'guide_sha': GUIDE_SHA, 'run_id': os.environ['GITHUB_RUN_ID'],
                      'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'requested': len(EXPECTED),
                      'objects': [], 'status': 'started'}
+          receipt['credential_availability'] = {
+              name: bool(os.environ.get(alias)) for name, alias in {
+                  'CACHE_ENCRYPTION_KEY': 'CACHE_ENCRYPTION_KEY',
+                  'SEED_STAGING_RCLONE_CONF_B64': 'SEED_STAGING_RCLONE_CONF_B64',
+                  'MOD_CACHE_S3_READ_ACCESS_KEY_ID': 'RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID',
+                  'MOD_CACHE_S3_READ_SECRET_ACCESS_KEY': 'RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY',
+                  'MOD_CACHE_S3_ACCESS_KEY_ID': 'SOURCE_MOD_CACHE_S3_ACCESS_KEY_ID',
+                  'MOD_CACHE_S3_SECRET_ACCESS_KEY': 'SOURCE_MOD_CACHE_S3_SECRET_ACCESS_KEY',
+                  'MOD_CACHE_S3_ENDPOINT': 'RCLONE_CONFIG_MODCACHE_ENDPOINT',
+                  'MOD_CACHE_BUCKET': 'MOD_CACHE_BUCKET',
+              }.items()}
+          receipt['excluded_credential_sources'] = {'generic_cache_pair': 'backend-not-established'}
           
           def save():
               (evidence / 'provenance.json').write_text(json.dumps(receipt, indent=2, sort_keys=True))
@@ -138,10 +153,20 @@ jobs:
               config = seed.write_private(work / 'staging.rclone.conf', config_text) if config_text else None
               del config_text
               bucket = os.environ.get('MOD_CACHE_BUCKET', '')
-              remote_ready = bucket == 'modsync-mod-cache' and all(os.environ.get(name) for name in (
-                  'RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID', 'RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY',
-                  'RCLONE_CONFIG_MODCACHE_ENDPOINT'))
+              remote_keys = ('RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID', 'RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY')
+              original_remote_pair = {name: os.environ.get(name, '') for name in remote_keys}
+              candidates = (
+                  ('s3-read-pair', original_remote_pair[remote_keys[0]], original_remote_pair[remote_keys[1]]),
+                  ('s3-write-pair-readonly', os.environ.get('SOURCE_MOD_CACHE_S3_ACCESS_KEY_ID', ''),
+                   os.environ.get('SOURCE_MOD_CACHE_S3_SECRET_ACCESS_KEY', '')),
+              )
+              complete_pairs = [(label, access_id, secret) for label, access_id, secret in candidates
+                                if access_id and secret]
+              remote_ready = (bucket == 'modsync-mod-cache' and bool(os.environ.get('RCLONE_CONFIG_MODCACHE_ENDPOINT'))
+                              and bool(complete_pairs))
               receipt['configured_sources'] = {'s3_read': remote_ready, 'staging_read': config is not None}
+              receipt['complete_s3_pairs'] = {label: bool(access_id and secret)
+                                              for label, access_id, secret in candidates}
               # Bound each existing helper transfer; never enable its 3-hour default here.
               original_rclone = seed.refresh.rclone
               def bounded_rclone(*args, timeout=600):
@@ -153,7 +178,8 @@ jobs:
                   receipt['objects'].append(row)
                   for obj in pin['objects']:
                       recovered = None
-                      if remote_ready:
+                      for source_label, access_id, secret in complete_pairs if remote_ready else ():
+                          os.environ.update(dict(zip(remote_keys, (access_id, secret))))
                           try:
                               incoming = work / ('incoming-' + obj['sha256'])
                               with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
@@ -169,11 +195,14 @@ jobs:
                                   if outcome[0] != 'imported' or outcome[1]['extension'] != obj['extension']:
                                       raise seed.SeedError('cached archive type does not match its pin')
                                   recovered = (seed.cache.object_path(root, outcome[1]), outcome[1])
-                              row['routes'].append({'source': 's3-read', 'status': 'verified'})
+                              row['routes'].append({'source': source_label, 'status': 'verified'})
                           except Exception as exc:
-                              row['routes'].append({'source': 's3-read', 'status': category(exc)})
+                              row['routes'].append({'source': source_label, 'status': category(exc)})
                           finally:
                               incoming.unlink(missing_ok=True)
+                              os.environ.update(original_remote_pair)
+                          if recovered is not None:
+                              break
                       if recovered is None and config is not None:
                           try:
                               with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
