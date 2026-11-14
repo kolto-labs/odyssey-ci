@@ -1,0 +1,321 @@
+# One-component production proof only; does not claim a complete-guide or install pass.
+name: Profile production K1 movie validation
+on:
+  push:
+    branches: [ci/modsync-key-bootstrap-20261114]
+    paths: [.github/workflows/k1-movie-validation-profile.yml]
+permissions: {contents: read, actions: read}
+concurrency: {group: k1-movie-validation-profile, cancel-in-progress: false}
+jobs:
+  probe:
+    if: ${{ github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    environment: mod-cache-seed
+    steps:
+      - name: Checkout reviewed source GET helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 3045420a6082d82c7b39ccf58351e1704392439d
+          path: source
+          persist-credentials: false
+      - name: Checkout exact production engine
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/ModSync.rs
+          ref: ce2834b346ff736aa36189c49f70e9b8629005b9
+          path: engine
+          persist-credentials: false
+      - name: Checkout reviewed guide
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/mod-builds
+          ref: 67dc5fd8da6abde324c51d32eee3d04687070dd6
+          path: guide-input
+          persist-credentials: false
+      - name: Prepare isolated production toolchain
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          umask 077
+          base="$RUNNER_TEMP/k1-movie-validation-profile"
+          mkdir -p "$base/evidence" "$base/archives" "$base/home" "$base/cargo" "$base/tmp" "$base/sealed" "$base/validation-scratch"
+          sudo rm -rf -- /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+          sudo apt-get install -y --no-install-recommends age 7zip 7zip-rar unrar libarchive-tools pkg-config libssl-dev
+          rustup toolchain install 1.95.0 --profile minimal
+          env -i PATH="$PATH" HOME="$base/home" RUSTUP_HOME="$HOME/.rustup" rustc +1.95.0 -Vv >"$base/evidence/rustc.txt"
+          python source/tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone" >"$base/evidence/reader-bootstrap.log" 2>&1
+      - name: Build the actual production CLI with release safety checks
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          base="$RUNNER_TEMP/k1-movie-validation-profile"
+          cd engine
+          /usr/bin/time -v -o "$base/evidence/build-time.txt" env -i PATH="$PATH" HOME="$base/home" \
+            RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$base/cargo" CARGO_TARGET_DIR="$base/target" TMPDIR="$base/tmp" \
+            CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
+            cargo +1.95.0 build --release --locked --lib --bin modsync -j2 --no-default-features >"$base/evidence/build.log" 2>&1
+      - name: GET and verify the one exact reviewed archive
+        timeout-minutes: 35
+        env:
+          RCLONE_CONFIG_MODCACHE_TYPE: s3
+          RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_MODCACHE_REGION: auto
+          RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+          RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: |
+          umask 077
+          python - <<'PY'
+          import contextlib, json, os, shutil, sys, time
+          from pathlib import Path
+          base = Path(os.environ['RUNNER_TEMP']) / 'k1-movie-validation-profile'
+          sys.path.insert(0, str(Path('source/tools/modsync-ci').resolve()))
+          import seed_archives as seed
+          sha = '5b60a4b3e559a40c1a06477431e6a60be3794d116cdb7e594fc2f5e32dc93d26'
+          size = 16567032171
+          assert os.environ['MOD_CACHE_BUCKET'] == 'modsync-mod-cache'
+          assert all(os.environ.get('RCLONE_CONFIG_MODCACHE_' + key) for key in ('ACCESS_KEY_ID', 'SECRET_ACCESS_KEY', 'ENDPOINT'))
+          assert shutil.disk_usage(base).free > 2 * size + 5 * 1024**3, 'insufficient space for input and production snapshot'
+          local = base / 'archives/k1rs_30fps_1920x1080.7z'
+          started = time.monotonic()
+          original = seed.refresh.rclone
+          seed.refresh.rclone = lambda *args, timeout=1800: original(*args, timeout=min(timeout, 1800))
+          with open(base / 'evidence/fetch.log', 'w') as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+              ok = seed.refresh.fetch('MODCACHE:modsync-mod-cache/modsync-archives/objects/' + sha, local,
+                                      '--retries', '1', '--max-transfer', str(size + 1), '--cutoff-mode', 'hard')
+              assert ok and seed.refresh.matches(local, sha, size), 'exact object verification failed'
+          (base / 'evidence/object.json').write_text(json.dumps({'sha256': sha, 'bytes': size, 'seconds': time.monotonic()-started}))
+          PY
+      - name: Acquire only the source-owned authenticated K1 baseline
+        timeout-minutes: 25
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
+        run: |
+          umask 077
+          python - <<'PY_BASELINE'
+          import json, os, re, subprocess, sys, urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+          base=Path(os.environ['RUNNER_TEMP'])/'k1-movie-validation-profile'
+          evidence=base/'evidence'
+          receipt={'schema_version':1,'scope':'source-owned K1 baseline read only; no Steam or legacy repository','status':'started'}
+          def save(): (evidence/'baseline-receipt.json').write_text(json.dumps(receipt,indent=2))
+          save()
+          try:
+              assert os.environ['GITHUB_REPOSITORY']=='kolto-labs/odyssey-ci'
+              request=urllib.request.Request('https://api.github.com/repos/kolto-labs/odyssey-ci/actions/artifacts/12571721820',
+                  headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
+              with urllib.request.urlopen(request,timeout=60) as response: artifact=json.load(response)
+              assert artifact['id']==12571721820 and artifact['name']=='game-k1-sealed' and artifact['size_in_bytes']==3027989824
+              assert artifact['expired'] is False and datetime.fromisoformat(artifact['expires_at'].replace('Z','+00:00'))>datetime.now(timezone.utc)
+              assert re.fullmatch('sha256:[0-9a-f]{64}',artifact['digest'])
+              (evidence/'baseline-artifact-metadata.json').write_text(json.dumps(artifact,indent=2))
+              env={k:os.environ[k] for k in ('PATH','RUNNER_TEMP','GITHUB_REPOSITORY','GITHUB_TOKEN','CACHE_ENCRYPTION_KEY')}
+              env.update(HOME=str(base/'home'),TMPDIR=str(base/'tmp'),GITHUB_OUTPUT=str(evidence/'baseline-outputs.txt'))
+              with (evidence/'baseline-acquisition.log').open('w') as log:
+                  subprocess.run([sys.executable,'engine/tools/modsync-ci/fullrun_baseline.py','--game','k1',
+                      '--seal-dir',str(base/'sealed'),'--game-dir',str(base/'game'),'--consumer','--required'],
+                      env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,timeout=1200,check=True)
+                  outputs=dict(line.split('=',1) for line in (evidence/'baseline-outputs.txt').read_text().splitlines())
+                  assert outputs['available']=='true' and outputs['origin']=='artifact:current:kolto-labs/odyssey-ci:12571721820'
+                  subprocess.run([sys.executable,'engine/tools/modsync-ci/game_cache.py','normalize-case','--game','k1',
+                      '--game-dir',str(base/'game'),'--label','movie-validation-profile'],env=env,stdin=subprocess.DEVNULL,
+                      stdout=log,stderr=subprocess.STDOUT,timeout=120,check=True)
+              receipt.update(status='verified',artifact_id=artifact['id'],artifact_digest=artifact['digest'],zip_bytes=artifact['size_in_bytes'])
+          except BaseException as exc:
+              receipt.update(status='failed',failure_category=type(exc).__name__);save();sys.exit(1)
+          finally: save()
+          PY_BASELINE
+      - name: Convert actual guide, project one unchanged component, bind and independently replay
+        id: probe
+        timeout-minutes: 60
+        run: |
+          umask 077
+          python - <<'PY'
+          import copy, hashlib, json, os, re, subprocess, time
+          from pathlib import Path
+          base = Path(os.environ['RUNNER_TEMP']) / 'k1-movie-validation-profile'
+          evidence, archives = base / 'evidence', base / 'archives'
+          binary = base / 'target/release/modsync'
+          guide = Path('guide-input/content/k1/full.md').resolve()
+          url = 'https://deadlystream.com/files/file/2380-k1-cutscenes-rescaled/'
+          name = 'k1rs_30fps_1920x1080.7z'
+          def digest(path):
+              with path.open('rb') as stream: return hashlib.file_digest(stream, 'sha256').hexdigest()
+          env = {'PATH': os.environ['PATH'], 'HOME': str(base/'home'), 'TMPDIR': str(base/'tmp'), 'LC_ALL': 'C.UTF-8'}
+          receipt = {'schema': 1, 'scope': 'one real guide component conversion/replay prerequisite; no full-guide or install claim', 'status': 'started',
+                     'source_repository': os.environ['GITHUB_REPOSITORY'], 'source_sha': os.environ['GITHUB_SHA'],
+                     'source_run_id': os.environ['GITHUB_RUN_ID'], 'source_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                     'guide_sha': '67dc5fd8da6abde324c51d32eee3d04687070dd6', 'guide_sha256': digest(guide),
+                     'engine_sha': 'ce2834b346ff736aa36189c49f70e9b8629005b9', 'binary_sha256': digest(binary), 'stages': []}
+          def save(): (evidence/'metrics.json').write_text(json.dumps(receipt, indent=2, sort_keys=True))
+          def run(label, args, timeout):
+              started = time.monotonic(); stage = {'stage': label, 'status': 'started'}; receipt['stages'].append(stage); save()
+              try:
+                  with (evidence/(label+'.log')).open('w') as log:
+                      result = subprocess.run([str(binary), 'convert', *map(str,args)], env=env, stdin=subprocess.DEVNULL,
+                                              stdout=log, stderr=subprocess.STDOUT, timeout=timeout, check=True)
+                  stage.update(status='complete', exit_code=result.returncode)
+              finally: stage['seconds'] = time.monotonic()-started; save()
+          def one(path):
+              items = json.loads(path.read_text()); assert isinstance(items, list) and len(items)==1; return items[0]
+          try:
+              for directory, expected in [('engine', receipt['engine_sha']), ('guide-input', receipt['guide_sha']),
+                                           ('source', '3045420a6082d82c7b39ccf58351e1704392439d')]:
+                  assert subprocess.check_output(['git','-C',directory,'rev-parse','HEAD'], env=env, text=True).strip()==expected
+              assert receipt['guide_sha256']=='44067788c6cb7a83b38d468817f273ce5cc901cd5e000c0f9ff65f8af15fc6ed'
+              whole, projected, bound, reviewed = [evidence/(label+'.json') for label in ('whole-guide','projected','bound','reviewed')]
+              run('whole-guide-convert', [guide,whole,'--format','json','--parse-directions'], 300)
+              components = json.loads(whole.read_text()); assert isinstance(components,list)
+              matches = [(i,c) for i,c in enumerate(components) if url in c.get('ResourceRegistry',{})]
+              assert len(matches)==1, 'expected one exact guide URL association'
+              index, component = matches[0]; projection = [copy.deepcopy(component)]
+              projected.write_text(json.dumps(projection,indent=2)); assert one(projected)==components[index]
+              receipt.update(component_guid=component['Guid'], original_component_index=index, full_component_count=len(components),
+                             projection='exact unchanged component; all other components excluded', projected_sha256=digest(projected))
+              mapping = evidence/'archive-map.json'; mapping.write_text(json.dumps({url:name}))
+              run('auto-local-bind', [projected,bound,'--format','json','--auto-generate-local','--source-path',archives,'--archive-map',mapping], 1200)
+              generated=one(bound); binding=generated['ArchiveMovieBinding']; record=generated['DraftReview']
+              assert binding['Schema']==1 and len(binding['Archives'])==1 and record['Generator']=='resolved-movie-archives'
+              inventory=binding['Archives'][0]
+              assert inventory['Filename']==name and inventory['Sha256']=='5b60a4b3e559a40c1a06477431e6a60be3794d116cdb7e594fc2f5e32dc93d26'
+              assert inventory['Bytes']==16567032171 and len(inventory['Members'])==61 and len(inventory['ExcludedOptionalMembers'])==11
+              assert not set(inventory['Members']) & set(inventory['ExcludedOptionalMembers']) and len(inventory['Directories'])==5
+              assert record['RequiresReview'] is True and len(generated['Instructions'])==2
+              assert binding['Context']['Layout']=='ReviewedMovieVariants' and len(record['Derivations'])==1
+              canonical = evidence/'bound-canonical.json'
+              run('canonical-bound-export', [bound,canonical,'--format','json'], 300)
+              normalized=one(canonical); expected=copy.deepcopy(generated)
+              for instruction in expected['Instructions']:
+                  instruction['Source']=[source.replace('\\','/') for source in instruction['Source']]
+              assert normalized==expected, 'normal export changed more than instruction Source separators'
+              assert normalized['DraftReview']['RequiresReview'] is True and 'Verification' not in normalized['DraftReview']
+              extract, move = normalized['Instructions']
+              assert extract['Action']=='Extract' and extract['Source']==['<<modDirectory>>/'+name]
+              assert move['Action']=='Move' and move['Destination']=='<<kotorDirectory>>\\Movies'
+              expected_sources=['<<modDirectory>>/'+Path(name).stem+'/'+member for member in inventory['Members']]
+              assert len(expected_sources)==len(set(expected_sources))==61 and move['Source']==expected_sources
+              run('independent-verified-replay', [bound,reviewed,'--format','json','--source-path',archives,'--review-verified-drafts'], 1200)
+              final=one(reviewed); review=final['DraftReview']; verification=review['Verification']
+              assert final['Guid']==component['Guid'] and final['ArchiveMovieBinding']==binding and final['Instructions']==normalized['Instructions']
+              assert final.get('Options',[])==generated.get('Options',[]) and review['RequiresReview'] is False and review['ReviewedIdentity']
+              assert {k:v for k,v in final.items() if k!='DraftReview'}=={k:v for k,v in normalized.items() if k!='DraftReview'}
+              assert {k:v for k,v in review.items() if k not in ('RequiresReview','Verification','ReviewedIdentity')}=={k:v for k,v in record.items() if k!='RequiresReview'}
+              assert verification['Kind']=='ArchiveDerived' and verification['Reviewer']=='modsync-ci-tool'
+              assert re.fullmatch('[0-9a-f]{64}',verification['ReplayDigest'])
+              receipt.update(status='complete', instruction_count=len(final['Instructions']), base_members=61, excluded_optional_members=11,
+                             binding=binding, draft_review=review, bound_sha256=digest(bound), canonical_sha256=digest(canonical), reviewed_sha256=digest(reviewed))
+          except BaseException as exc:
+              receipt.update(status='failed', failure_category=type(exc).__name__); raise
+          finally: save()
+          PY
+      - name: Profile one actual plain validation without changing its input semantics
+        timeout-minutes: 50
+        run: |
+          umask 077
+          python - <<'PY_PROFILE'
+          import hashlib, json, os, signal, subprocess, sys, time
+          from pathlib import Path
+          base=Path(os.environ['RUNNER_TEMP'])/'k1-movie-validation-profile'
+          evidence=base/'evidence';binary=base/'target/release/modsync';model=evidence/'reviewed.json'
+          guid='e75d7430-9865-8cbf-a574-773a147cabee'
+          receipt={'schema_version':1,'scope':'single actual K1 movie plain-validation runtime profile; no full-guide/install claim',
+                   'engine_sha':'ce2834b346ff736aa36189c49f70e9b8629005b9','status':'started','timeout_seconds':2700,
+                   'sample_interval_seconds':15,'selected_component_guids':[guid],'json_events':True}
+          def digest(path):
+              with path.open('rb') as stream: return hashlib.file_digest(stream,'sha256').hexdigest()
+          def save(): (evidence/'validation-profile.json').write_text(json.dumps(receipt,indent=2))
+          save();started=time.monotonic();process=None
+          def sample(root_pid,stream):
+              todo=[root_pid];seen=set();pids=[]
+              while todo and len(seen)<128:
+                  pid=todo.pop()
+                  if pid in seen: continue
+                  seen.add(pid);proc=Path('/proc')/str(pid)
+                  try:
+                      todo.extend(int(x) for x in (proc/'task'/str(pid)/'children').read_text().split());pids.append(proc)
+                  except (FileNotFoundError,ProcessLookupError,PermissionError): pass
+              value={'elapsed_seconds':round(time.monotonic()-started,3),'processes':len(pids),'cpu_user_ticks':0,'cpu_system_ticks':0,
+                     'rss_bytes':0,'fd_count':0,'rchar':0,'wchar':0,'syscr':0,'syscw':0,'read_bytes':0,'write_bytes':0,
+                     'scratch_free_bytes':os.statvfs(base/'validation-scratch').f_bavail*os.statvfs(base/'validation-scratch').f_frsize}
+              for proc in pids:
+                  try:
+                      fields=(proc/'stat').read_text().rsplit(')',1)[1].split()
+                      value['cpu_user_ticks']+=int(fields[11]);value['cpu_system_ticks']+=int(fields[12])
+                      value['rss_bytes']+=int((proc/'statm').read_text().split()[1])*os.sysconf('SC_PAGE_SIZE')
+                      value['fd_count']+=sum(1 for _ in (proc/'fd').iterdir())
+                      for line in (proc/'io').read_text().splitlines():
+                          key,number=line.split(':',1)
+                          if key in ('rchar','wchar','syscr','syscw','read_bytes','write_bytes'): value[key]+=int(number)
+                  except (FileNotFoundError,ProcessLookupError,PermissionError): continue
+              stream.write(json.dumps(value,sort_keys=True)+'\n');stream.flush()
+              return [int(proc.name) for proc in pids if int(proc.name)!=root_pid]
+          try:
+              component=json.loads(model.read_text());assert len(component)==1 and component[0]['Guid']==guid
+              assert component[0]['DraftReview']['RequiresReview'] is False
+              assert component[0]['DraftReview']['Verification']['Kind']=='ArchiveDerived'
+              assert json.loads((evidence/'metrics.json').read_text())['status']=='complete'
+              assert json.loads((evidence/'baseline-receipt.json').read_text())['status']=='verified'
+              receipt.update(input_sha256=digest(model),binary_sha256=digest(binary),clock_ticks_per_second=os.sysconf('SC_CLK_TCK'))
+              env={'PATH':os.environ['PATH'],'HOME':str(base/'home'),'TMPDIR':str(base/'tmp'),'LC_ALL':'C.UTF-8'}
+              command=['/usr/bin/time','-v','-o',str(base/'validate-time-raw.txt'),str(binary),'validate','--input',str(model),
+                       '--game-dir',str(base/'game'),'--source-dir',str(base/'archives'),'--select',guid,
+                       '--scratch-dir',str(base/'validation-scratch'),'--json']
+              timed_out=False
+              with (evidence/'validate-events.jsonl').open('w') as log, (evidence/'validate-numeric-samples.jsonl').open('w') as samples:
+                  process=subprocess.Popen(command,env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+                  deadline=time.monotonic()+2700
+                  while process.poll() is None:
+                      children=sample(process.pid,samples)
+                      remaining=deadline-time.monotonic()
+                      if remaining<=0:
+                          timed_out=True
+                          # Let GNU time collect the child's terminal accounting.
+                          for pid in children:
+                              try: os.kill(pid,signal.SIGTERM)
+                              except ProcessLookupError: pass
+                          try: process.wait(timeout=5)
+                          except subprocess.TimeoutExpired:
+                              for pid in children:
+                                  try: os.kill(pid,signal.SIGKILL)
+                                  except ProcessLookupError: pass
+                              try: process.wait(timeout=5)
+                              except subprocess.TimeoutExpired: os.killpg(process.pid,signal.SIGKILL);process.wait()
+                          break
+                      try: process.wait(timeout=min(15,remaining))
+                      except subprocess.TimeoutExpired: pass
+                  code=process.wait()
+              receipt.update(status='timed-out' if timed_out else 'passed' if code==0 else 'failed',exit_code=code,
+                             elapsed_seconds=round(time.monotonic()-started,3),input_unchanged=digest(model)==receipt['input_sha256'])
+              assert receipt['input_unchanged']
+              if timed_out or code: sys.exit(1)
+          except BaseException as exc:
+              if receipt['status']=='started': receipt.update(status='failed',failure_category=type(exc).__name__)
+              raise
+          finally:
+              if process is not None and process.poll() is None:
+                  os.killpg(process.pid,signal.SIGKILL);process.wait()
+              raw=base/'validate-time-raw.txt'
+              if raw.exists():
+                  lines=raw.read_text(errors='replace').splitlines()
+                  # GNU time -v includes argv in one line; retain numeric statistics only.
+                  (evidence/'validate-time.txt').write_text('\n'.join(line for line in lines if not line.lstrip().startswith('Command being timed:'))+'\n')
+              save()
+          PY_PROFILE
+      - name: Retain encrypted production-probe evidence
+        timeout-minutes: 10
+        id: evidence
+        if: ${{ always() }}
+        uses: ./engine/.github/actions/retain-fullrun-evidence
+        with:
+          source: ${{ runner.temp }}/k1-movie-validation-profile/evidence
+          name: k1-movie-validation-profile-${{ github.run_id }}-${{ github.run_attempt }}
+          encryption-recipient: age1a5ye9zmxelf0fy6qt2t265463ts28kd0z2cjn95fjt9w3vcssvqqg5e4vg
+      - name: Remove disposable private scratch after successful evidence retention
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        run: rm -rf -- "${RUNNER_TEMP:?}/k1-movie-validation-profile"

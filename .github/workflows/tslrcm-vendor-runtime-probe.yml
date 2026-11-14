@@ -159,7 +159,7 @@ jobs:
         base=Path(os.environ['RUNNER_TEMP'])/'tslrcm-vendor-runtime'; evidence=base/'evidence'
         env={'PATH':'/usr/bin:/bin','HOME':str(base/'home'),'WINEPREFIX':str(base/'wine'),'WINEDEBUG':'-all','LC_ALL':'C.UTF-8','TMPDIR':str(base/'home'),'PYTHONDONTWRITEBYTECODE':'1'}
         command=['/usr/bin/xvfb-run','-a',str(base/'venv/bin/python'),str(Path('engine/tools/modsync-ci/manual.py').resolve()),'--guide',str(base/'guide.md'),'--plan',str(base/'plan.json'),'--game-dir',str(base/'game'),'--archives',str(base/'archives'),'--work-dir',str(base/'manual'),'--report',str(evidence/'manual-report.json'),'--step-timeout','2700']
-        receipt={'scope':'isolated actual vendor runtime; no native CLI/GUI or full-guide completion claim','command':command,'started':time.time(),'credential_environment_keys':[], 'status':'started'}
+        receipt={'run_id':os.environ['GITHUB_RUN_ID'],'run_attempt':os.environ['GITHUB_RUN_ATTEMPT'],'wine_prefix':str(base/'wine'),'scope':'isolated actual vendor runtime; no native CLI/GUI or full-guide completion claim','command':command,'started':time.time(),'credential_environment_keys':[], 'status':'started'}
         (evidence/'runtime.json').write_text(json.dumps(receipt,indent=2))
         try:
          with (evidence/'runtime.log').open('w') as log: result=subprocess.run(command,env=env,stdout=log,stderr=subprocess.STDOUT,timeout=3900)
@@ -207,11 +207,30 @@ jobs:
         set -euo pipefail
         umask 077
         python - <<'PY_RETAIN'
-        import os,shutil,subprocess
+        import json,os,shutil,subprocess
         from pathlib import Path
         base=Path(os.environ['RUNNER_TEMP'])/'tslrcm-vendor-runtime'; evidence=base/'evidence'; evidence.mkdir(parents=True,exist_ok=True)
         env={'PATH':'/usr/bin:/bin','HOME':str(base/'home'),'WINEPREFIX':str(base/'wine'),'WINEDEBUG':'-all'}
-        if (base/'wine').is_dir():
+        def verified_own_quiescence():
+         path=base/'evidence/runtime.json'
+         if not path.is_file() or path.is_symlink(): return False
+         try: receipt=json.loads(path.read_text())
+         except (ValueError,OSError): return False
+         rows=receipt.get('wine_cleanup')
+         command=receipt.get('command')
+         return (receipt.get('run_id')==os.environ['GITHUB_RUN_ID']
+          and receipt.get('run_attempt')==os.environ['GITHUB_RUN_ATTEMPT']
+          and receipt.get('wine_prefix')==str(base/'wine')
+          and receipt.get('status')=='vendor_recipe_verified'
+          and receipt.get('manual_exit_code')==0 and type(receipt.get('manual_exit_code')) is int
+          and receipt.get('post_quiescence_entire_game_manifest_matches_production_after') is True
+          and isinstance(command,list) and len(command)>3
+          and command[:4]==['/usr/bin/xvfb-run','-a',str(base/'venv/bin/python'),str(Path('engine/tools/modsync-ci/manual.py').resolve())]
+          and command.count('--game-dir')==1 and command.index('--game-dir')+1<len(command) and command[command.index('--game-dir')+1]==str(base/'game')
+          and isinstance(rows,list) and len(rows)==2
+          and all(isinstance(row,dict) and set(row)=={'argument','exit_code'} and row.get('argument')==argument and type(row.get('exit_code')) is int and row['exit_code']==0 for row,argument in zip(rows,('-k','-w'))))
+        # This workflow starts no Wine command after the runtime's exact successful -k/-w pair.
+        if (base/'wine').is_dir() and not verified_own_quiescence():
          for arg in ('-k','-w'):
           with (evidence/'wine-cleanup.log').open('a') as log: subprocess.run(['/usr/bin/wineserver',arg],env=env,stdout=log,stderr=subprocess.STDOUT,timeout=120,check=True)
         # Explicit text/manifest allowlist only. Never recurse through the game, snapshot or prefix.
@@ -237,11 +256,30 @@ jobs:
       run: |
         set -euo pipefail
         python - <<'PY_CLEAN'
-        import os,shutil,subprocess
+        import json,os,shutil,subprocess
         from pathlib import Path
         base=Path(os.environ['RUNNER_TEMP'])/'tslrcm-vendor-runtime'
         assert base.parent==Path(os.environ['RUNNER_TEMP']) and not base.is_symlink()
-        if (base/'wine').is_dir():
+        def verified_own_quiescence():
+         path=base/'evidence/runtime.json'
+         if not path.is_file() or path.is_symlink(): return False
+         try: receipt=json.loads(path.read_text())
+         except (ValueError,OSError): return False
+         rows=receipt.get('wine_cleanup')
+         command=receipt.get('command')
+         return (receipt.get('run_id')==os.environ['GITHUB_RUN_ID']
+          and receipt.get('run_attempt')==os.environ['GITHUB_RUN_ATTEMPT']
+          and receipt.get('wine_prefix')==str(base/'wine')
+          and receipt.get('status')=='vendor_recipe_verified'
+          and receipt.get('manual_exit_code')==0 and type(receipt.get('manual_exit_code')) is int
+          and receipt.get('post_quiescence_entire_game_manifest_matches_production_after') is True
+          and isinstance(command,list) and len(command)>3
+          and command[:4]==['/usr/bin/xvfb-run','-a',str(base/'venv/bin/python'),str(Path('engine/tools/modsync-ci/manual.py').resolve())]
+          and command.count('--game-dir')==1 and command.index('--game-dir')+1<len(command) and command[command.index('--game-dir')+1]==str(base/'game')
+          and isinstance(rows,list) and len(rows)==2
+          and all(isinstance(row,dict) and set(row)=={'argument','exit_code'} and row.get('argument')==argument and type(row.get('exit_code')) is int and row['exit_code']==0 for row,argument in zip(rows,('-k','-w'))))
+        # This workflow starts no Wine command after the runtime's exact successful -k/-w pair.
+        if (base/'wine').is_dir() and not verified_own_quiescence():
          env={'PATH':'/usr/bin:/bin','HOME':str(base/'home'),'WINEPREFIX':str(base/'wine')}
          for arg in ('-k','-w'): subprocess.run(['/usr/bin/wineserver',arg],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=120,check=True)
         for name in ('game','sealed','archives','manual','home','wine','venv'):
