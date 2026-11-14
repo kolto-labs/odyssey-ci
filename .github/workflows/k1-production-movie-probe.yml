@@ -1,0 +1,172 @@
+# One-component production proof only; does not claim a complete-guide or install pass.
+name: Probe production K1 movie binding and replay
+on:
+  push:
+    branches: [ci/modsync-key-bootstrap-20261114]
+    paths: [.github/workflows/k1-production-movie-probe.yml]
+permissions: {contents: read}
+concurrency: {group: k1-production-movie-probe, cancel-in-progress: false}
+jobs:
+  probe:
+    if: ${{ github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: mod-cache-seed
+    steps:
+      - name: Checkout reviewed source GET helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 3045420a6082d82c7b39ccf58351e1704392439d
+          path: source
+          persist-credentials: false
+      - name: Checkout exact production engine
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/ModSync.rs
+          ref: 54956ae4d45815938634d8b3439ee4b7d7fc2c27
+          path: engine
+          persist-credentials: false
+      - name: Checkout reviewed guide
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/mod-builds
+          ref: 67dc5fd8da6abde324c51d32eee3d04687070dd6
+          path: guide-input
+          persist-credentials: false
+      - name: Prepare isolated production toolchain
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          umask 077
+          base="$RUNNER_TEMP/k1-production-movie-probe"
+          mkdir -p "$base/evidence" "$base/archives" "$base/home" "$base/cargo" "$base/tmp"
+          sudo rm -rf -- /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+          sudo apt-get install -y --no-install-recommends age 7zip 7zip-rar unrar libarchive-tools pkg-config libssl-dev
+          rustup toolchain install 1.95.0 --profile minimal
+          env -i PATH="$PATH" HOME="$base/home" RUSTUP_HOME="$HOME/.rustup" rustc +1.95.0 -Vv >"$base/evidence/rustc.txt"
+          python source/tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone" >"$base/evidence/reader-bootstrap.log" 2>&1
+      - name: Build the actual production CLI with release safety checks
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          base="$RUNNER_TEMP/k1-production-movie-probe"
+          cd engine
+          /usr/bin/time -v -o "$base/evidence/build-time.txt" env -i PATH="$PATH" HOME="$base/home" \
+            RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$base/cargo" CARGO_TARGET_DIR="$base/target" TMPDIR="$base/tmp" \
+            CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
+            cargo +1.95.0 build --release --locked --lib --bin modsync -j2 --no-default-features >"$base/evidence/build.log" 2>&1
+      - name: GET and verify the one exact reviewed archive
+        timeout-minutes: 35
+        env:
+          RCLONE_CONFIG_MODCACHE_TYPE: s3
+          RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_MODCACHE_REGION: auto
+          RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+          RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: |
+          umask 077
+          python - <<'PY'
+          import contextlib, json, os, shutil, sys, time
+          from pathlib import Path
+          base = Path(os.environ['RUNNER_TEMP']) / 'k1-production-movie-probe'
+          sys.path.insert(0, str(Path('source/tools/modsync-ci').resolve()))
+          import seed_archives as seed
+          sha = '5b60a4b3e559a40c1a06477431e6a60be3794d116cdb7e594fc2f5e32dc93d26'
+          size = 16567032171
+          assert os.environ['MOD_CACHE_BUCKET'] == 'modsync-mod-cache'
+          assert all(os.environ.get('RCLONE_CONFIG_MODCACHE_' + key) for key in ('ACCESS_KEY_ID', 'SECRET_ACCESS_KEY', 'ENDPOINT'))
+          assert shutil.disk_usage(base).free > 2 * size + 5 * 1024**3, 'insufficient space for input and production snapshot'
+          local = base / 'archives/k1rs_30fps_1920x1080.7z'
+          started = time.monotonic()
+          original = seed.refresh.rclone
+          seed.refresh.rclone = lambda *args, timeout=1800: original(*args, timeout=min(timeout, 1800))
+          with open(base / 'evidence/fetch.log', 'w') as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+              ok = seed.refresh.fetch('MODCACHE:modsync-mod-cache/modsync-archives/objects/' + sha, local,
+                                      '--retries', '1', '--max-transfer', str(size + 1), '--cutoff-mode', 'hard')
+              assert ok and seed.refresh.matches(local, sha, size), 'exact object verification failed'
+          (base / 'evidence/object.json').write_text(json.dumps({'sha256': sha, 'bytes': size, 'seconds': time.monotonic()-started}))
+          PY
+      - name: Convert actual guide, project one unchanged component, bind and independently replay
+        id: probe
+        timeout-minutes: 90
+        run: |
+          umask 077
+          python - <<'PY'
+          import copy, hashlib, json, os, re, subprocess, time
+          from pathlib import Path
+          base = Path(os.environ['RUNNER_TEMP']) / 'k1-production-movie-probe'
+          evidence, archives = base / 'evidence', base / 'archives'
+          binary = base / 'target/release/modsync'
+          guide = Path('guide-input/content/k1/full.md').resolve()
+          url = 'https://deadlystream.com/files/file/2380-k1-cutscenes-rescaled/'
+          name = 'k1rs_30fps_1920x1080.7z'
+          def digest(path):
+              with path.open('rb') as stream: return hashlib.file_digest(stream, 'sha256').hexdigest()
+          env = {'PATH': os.environ['PATH'], 'HOME': str(base/'home'), 'TMPDIR': str(base/'tmp'), 'LC_ALL': 'C.UTF-8'}
+          receipt = {'schema': 1, 'scope': 'one real guide component; no full-guide or install claim', 'status': 'started',
+                     'source_repository': os.environ['GITHUB_REPOSITORY'], 'source_sha': os.environ['GITHUB_SHA'],
+                     'source_run_id': os.environ['GITHUB_RUN_ID'], 'source_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                     'guide_sha': '67dc5fd8da6abde324c51d32eee3d04687070dd6', 'guide_sha256': digest(guide),
+                     'engine_sha': '54956ae4d45815938634d8b3439ee4b7d7fc2c27', 'binary_sha256': digest(binary), 'stages': []}
+          def save(): (evidence/'metrics.json').write_text(json.dumps(receipt, indent=2, sort_keys=True))
+          def run(label, args, timeout):
+              started = time.monotonic(); stage = {'stage': label, 'status': 'started'}; receipt['stages'].append(stage); save()
+              try:
+                  with (evidence/(label+'.log')).open('w') as log:
+                      result = subprocess.run([str(binary), 'convert', *map(str,args)], env=env, stdin=subprocess.DEVNULL,
+                                              stdout=log, stderr=subprocess.STDOUT, timeout=timeout, check=True)
+                  stage.update(status='complete', exit_code=result.returncode)
+              finally: stage['seconds'] = time.monotonic()-started; save()
+          def one(path):
+              items = json.loads(path.read_text()); assert isinstance(items, list) and len(items)==1; return items[0]
+          try:
+              for directory, expected in [('engine', receipt['engine_sha']), ('guide-input', receipt['guide_sha']),
+                                           ('source', '3045420a6082d82c7b39ccf58351e1704392439d')]:
+                  assert subprocess.check_output(['git','-C',directory,'rev-parse','HEAD'], env=env, text=True).strip()==expected
+              assert receipt['guide_sha256']=='44067788c6cb7a83b38d468817f273ce5cc901cd5e000c0f9ff65f8af15fc6ed'
+              whole, projected, bound, reviewed = [evidence/(label+'.json') for label in ('whole-guide','projected','bound','reviewed')]
+              run('whole-guide-convert', [guide,whole,'--format','json','--parse-directions'], 300)
+              components = json.loads(whole.read_text()); assert isinstance(components,list)
+              matches = [(i,c) for i,c in enumerate(components) if url in c.get('ResourceRegistry',{})]
+              assert len(matches)==1, 'expected one exact guide URL association'
+              index, component = matches[0]; projection = [copy.deepcopy(component)]
+              projected.write_text(json.dumps(projection,indent=2)); assert one(projected)==components[index]
+              receipt.update(component_guid=component['Guid'], original_component_index=index, full_component_count=len(components),
+                             projection='exact unchanged component; all other components excluded', projected_sha256=digest(projected))
+              mapping = evidence/'archive-map.json'; mapping.write_text(json.dumps({url:name}))
+              run('auto-local-bind', [projected,bound,'--format','json','--auto-generate-local','--source-path',archives,'--archive-map',mapping], 2400)
+              generated=one(bound); binding=generated['ArchiveMovieBinding']; record=generated['DraftReview']
+              assert binding['Schema']==1 and len(binding['Archives'])==1 and record['Generator']=='resolved-movie-archives'
+              inventory=binding['Archives'][0]
+              assert inventory['Filename']==name and inventory['Sha256']=='5b60a4b3e559a40c1a06477431e6a60be3794d116cdb7e594fc2f5e32dc93d26'
+              assert inventory['Bytes']==16567032171 and len(inventory['Members'])==61 and len(inventory['ExcludedOptionalMembers'])==11
+              assert not set(inventory['Members']) & set(inventory['ExcludedOptionalMembers']) and len(inventory['Directories'])==5
+              assert record['RequiresReview'] is True and len(generated['Instructions'])==2
+              assert binding['Context']['Layout']=='ReviewedMovieVariants' and len(record['Derivations'])==1
+              run('independent-verified-replay', [bound,reviewed,'--format','json','--source-path',archives,'--review-verified-drafts'], 2400)
+              final=one(reviewed); review=final['DraftReview']; verification=review['Verification']
+              assert final['Guid']==component['Guid'] and final['ArchiveMovieBinding']==binding and final['Instructions']==generated['Instructions']
+              assert final.get('Options',[])==generated.get('Options',[]) and review['RequiresReview'] is False and review['ReviewedIdentity']
+              assert verification['Kind']=='ArchiveDerived' and verification['Reviewer']=='modsync-ci-tool'
+              assert re.fullmatch('[0-9a-f]{64}',verification['ReplayDigest'])
+              receipt.update(status='complete', instruction_count=len(final['Instructions']), base_members=61, excluded_optional_members=11,
+                             binding=binding, draft_review=review, bound_sha256=digest(bound), reviewed_sha256=digest(reviewed))
+          except BaseException as exc:
+              receipt.update(status='failed', failure_category=type(exc).__name__); raise
+          finally: save()
+          PY
+      - name: Retain encrypted production-probe evidence
+        id: evidence
+        if: ${{ always() }}
+        uses: ./engine/.github/actions/retain-fullrun-evidence
+        with:
+          source: ${{ runner.temp }}/k1-production-movie-probe/evidence
+          name: k1-production-movie-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          encryption-recipient: age1a5ye9zmxelf0fy6qt2t265463ts28kd0z2cjn95fjt9w3vcssvqqg5e4vg
+      - name: Remove disposable private scratch after successful evidence retention
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        run: rm -rf -- "${RUNNER_TEMP:?}/k1-production-movie-probe"
