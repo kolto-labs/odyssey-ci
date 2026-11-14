@@ -1,0 +1,458 @@
+# One-time source-owned GET-only recovery of three exact reviewed objects.
+# Only independently authenticated ciphertext parts, index metadata and age evidence upload.
+name: Recover exact unretained guide ciphertext
+on:
+  push:
+    branches: [ci/modsync-key-bootstrap-20261114]
+    paths: [.github/workflows/k1-movie-ciphertext-bootstrap.yml]
+permissions: {contents: read, actions: read}
+concurrency:
+  group: exact-unretained-guide-ciphertext
+  cancel-in-progress: false
+jobs:
+  recover:
+    if: ${{ github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/ci/modsync-key-bootstrap-20261114' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: mod-cache-seed
+    steps:
+      - name: Checkout exact source tools
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+      - name: Checkout exact admitted guide
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: kolto-labs/mod-builds
+          ref: 67dc5fd8da6abde324c51d32eee3d04687070dd6
+          path: guide-input
+          persist-credentials: false
+      - name: Prepare GET-only reader and public-key evidence encryption
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/k1-movie-ciphertext/evidence"
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y --no-install-recommends age openssl >/dev/null 2>&1
+          python source/tools/modsync-ci/bootstrap_rclone.py --directory "$RUNNER_TEMP/rclone" >"$RUNNER_TEMP/k1-movie-ciphertext/evidence/reader-bootstrap.log" 2>&1
+      - name: Read exact objects, seal bounded packs and verify full recovery
+        id: stage
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          CACHE_ENCRYPTION_KEY: ${{ secrets.CACHE_ENCRYPTION_KEY }}
+          RCLONE_CONFIG_MODCACHE_TYPE: s3
+          RCLONE_CONFIG_MODCACHE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_MODCACHE_REGION: auto
+          RCLONE_CONFIG_MODCACHE_NO_CHECK_BUCKET: 'true'
+          RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID: ${{ secrets.MOD_CACHE_S3_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY: ${{ secrets.MOD_CACHE_S3_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_MODCACHE_ENDPOINT: ${{ secrets.MOD_CACHE_S3_ENDPOINT }}
+          MOD_CACHE_BUCKET: ${{ vars.MOD_CACHE_BUCKET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python - <<'PY_STAGE'
+          import contextlib, hashlib, json, math, os, re, shutil, signal, subprocess, sys, tempfile, time
+          from pathlib import Path
+          GUIDE_SHA = '67dc5fd8da6abde324c51d32eee3d04687070dd6'
+          MANIFEST_SHA = '372172cdca95f2378026d334d7e7c24414bb55972250be36156a169547de790f'
+          GUIDE_BODIES = {'k1': '44067788c6cb7a83b38d468817f273ce5cc901cd5e000c0f9ff65f8af15fc6ed',
+                          'k2': 'f442bdf574031623ed577609730d887069b9bc8e38e8e2f38ecc43a7e7487d5f'}
+          EXPECTED = [
+              {'archive_name': 'Heyorange_s_Sith Uniform_Reformation_Revised.7z', 'extension': '7z',
+               'sha256': '231ca858a5c354c3a76f8408b06256376930bcc999e8967491b1bc750547abe0', 'size': 139261662,
+               'guide_id': '6e60e499b93a1193627759acaac41143d1d7fa2b860b7ed23466c8b90140c434', 'game': 'k1',
+               'url': 'https://deadlystream.com/files/file/2808-heyoranges-sith-uniform-reformation-revised/', 'selectors': None},
+              {'archive_name': 'k1rs_30fps_1920x1080.7z', 'extension': '7z',
+               'sha256': '5b60a4b3e559a40c1a06477431e6a60be3794d116cdb7e594fc2f5e32dc93d26', 'size': 16567032171,
+               'guide_id': '1fbef761e0b030e5fb01d4c9d9eb9ffb2fd382be84841ab28110a809c406c05a', 'game': 'k1',
+               'url': 'https://deadlystream.com/files/file/2380-k1-cutscenes-rescaled/',
+               'selectors': [{'file': 'k1rs_30fps_1920x1080.7z', 'r': None}]},
+              {'archive_name': 'Improved_Enlightenment_and_Corruption_Feats_v1_0_1.zip', 'extension': 'zip',
+               'sha256': 'b3730c98a05a12ee0a6610a57570be62ff14a7217abaef667ced9b4b541f7eed', 'size': 4370,
+               'guide_id': 'b5e8bd00abb1552134512314ddb129643e2462f64ba6f09ef966d3207ebbb8ea', 'game': 'k2',
+               'url': 'https://deadlystream.com/files/file/2577-improved-ls-enlightenment-ds-corruption-feats/', 'selectors': None},
+          ]
+          PACK_LIMIT = 3 * 1024**3
+          PART_SIZE = 256 * 1024**2
+          base = Path(os.environ['RUNNER_TEMP']) / 'k1-movie-ciphertext'
+          evidence = base / 'evidence'
+          evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+          receipt = {'schema_version': 1, 'source_repository': 'kolto-labs/odyssey-ci',
+                     'source_sha': os.environ['GITHUB_SHA'], 'source_run_id': os.environ['GITHUB_RUN_ID'],
+                     'source_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'guide_sha': GUIDE_SHA,
+                     'source_manifest_sha256': MANIFEST_SHA, 'status': 'started', 'objects': [],
+                     'proof': 'exact source guide and manifest association, independent plaintext digest, authenticated sealed-part full-join recovery before ciphertext publication'}
+          def save():
+              data = json.dumps(receipt, indent=2, sort_keys=True).encode()
+              if len(data) > 1024**2:
+                  raise ValueError('bounded provenance exceeded')
+              (evidence / 'provenance.json').write_bytes(data)
+          def stop(signum, frame):
+              raise InterruptedError('terminated')
+          for signum in (signal.SIGTERM, signal.SIGINT):
+              signal.signal(signum, stop)
+          save()
+          work = Path(tempfile.mkdtemp(prefix='private-', dir=base))
+          try:
+              if (os.environ['GITHUB_REPOSITORY'] != 'kolto-labs/odyssey-ci'
+                      or os.environ['GITHUB_REF'] != 'refs/heads/ci/modsync-key-bootstrap-20261114'
+                      or not re.fullmatch(r'[0-9a-f]{40}', receipt['source_sha'])
+                      or not re.fullmatch(r'[1-9][0-9]*', receipt['source_run_id'])
+                      or not re.fullmatch(r'[1-9][0-9]*', receipt['source_run_attempt'])):
+                  raise ValueError('source scope mismatch')
+              if subprocess.check_output(['git', '-C', 'source', 'rev-parse', 'HEAD'], text=True).strip() != receipt['source_sha']:
+                  raise ValueError('source identity mismatch')
+              if subprocess.check_output(['git', '-C', 'guide-input', 'rev-parse', 'HEAD'], text=True).strip() != GUIDE_SHA:
+                  raise ValueError('guide revision mismatch')
+              sys.path.insert(0, str(Path('source/tools/modsync-ci').resolve()))
+              with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                  import seed_archives as seed
+                  import artstore_core as core
+              if len(os.environ.get('CACHE_ENCRYPTION_KEY', '').encode()) < 32:
+                  raise ValueError('original source-owned cache key unavailable')
+              guides = {game: Path('guide-input/content') / game / 'full.md' for game in GUIDE_BODIES}
+              if any(seed.cache.digest(path) != GUIDE_BODIES[game] for game, path in guides.items()):
+                  raise ValueError('guide body drift')
+              receipt['guide_sha256'] = GUIDE_BODIES
+              discovered = seed.cache.discover([str(path) for path in guides.values()])
+              items = {}
+              for expected in EXPECTED:
+                  matches = [item for item in discovered if item['id'] == expected['guide_id']]
+                  if (len(matches) != 1 or matches[0]['url'] != expected['url']
+                          or matches[0]['provider'] != 'deadlystream'
+                          or seed.cache.key_for(expected['url']) != expected['guide_id']
+                          or seed.cache.reviewed_selectors(matches[0]) != expected['selectors']):
+                      raise ValueError('exact guide URL or reviewed selection drift')
+                  items[expected['guide_id']] = matches[0]
+              required = ('RCLONE_CONFIG_MODCACHE_ACCESS_KEY_ID', 'RCLONE_CONFIG_MODCACHE_SECRET_ACCESS_KEY',
+                          'RCLONE_CONFIG_MODCACHE_ENDPOINT', 'MOD_CACHE_BUCKET')
+              if os.environ.get('MOD_CACHE_BUCKET') != 'modsync-mod-cache' or not all(os.environ.get(name) for name in required):
+                  raise ValueError('source GET configuration unavailable')
+              original_rclone = seed.refresh.rclone
+              def bounded_rclone(*args, timeout=600):
+                  return original_rclone(*args, timeout=min(timeout, 1800))
+              seed.refresh.rclone = bounded_rclone
+              def fetch(remote, local, limit):
+                  with open(os.devnull, 'w') as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                      return seed.refresh.fetch(remote, local, '--retries', '1', '--max-transfer', str(limit), '--cutoff-mode', 'hard')
+              manifest = work / 'manifest.json'
+              if (not fetch('MODCACHE:modsync-mod-cache/modsync-archives/manifest.json', manifest, 16 * 1024**2)
+                      or not manifest.is_file() or manifest.stat().st_size > 16 * 1024**2
+                      or seed.cache.digest(manifest) != MANIFEST_SHA):
+                  raise ValueError('reviewed source manifest missing, oversized or changed')
+              document = json.loads(manifest.read_text())
+              if (not isinstance(document, dict) or document.get('schema') != 1
+                      or not isinstance(document.get('entries'), dict)):
+                  raise ValueError('source manifest schema invalid')
+              for expected in EXPECTED:
+                  entry = document['entries'].get(expected['guide_id'])
+                  objects = seed.cache.entry_objects(entry)
+                  if (len(objects) != 1 or not seed.cache.objects_match_selection(items[expected['guide_id']], entry)
+                          or any(objects[0].get(key) != expected[key] for key in ('archive_name', 'extension', 'sha256', 'size'))):
+                      raise ValueError('source manifest association or object identity drift')
+              # The runner is disposable. Reclaim only known preinstalled SDKs if the
+              # measured free scratch cannot hold ciphertext plus a fresh full join.
+              total_size = sum(item['size'] for item in EXPECTED)
+              needed = total_size + max(item['size'] for item in EXPECTED) + PART_SIZE + 2 * 1024**3
+              reclaimed = []
+              for directory in ('/usr/local/lib/android', '/usr/share/dotnet', '/opt/ghc', '/opt/hostedtoolcache'):
+                  if shutil.disk_usage(work).free >= needed:
+                      break
+                  if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
+                      raise ValueError('insufficient scratch on a non-hosted runner')
+                  subprocess.run(['sudo', 'rm', '-rf', '--', directory], check=True,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  reclaimed.append(directory)
+              receipt['scratch'] = {'required_free_bytes': needed, 'available_free_bytes': shutil.disk_usage(work).free,
+                                    'reclaimed_hosted_sdk_paths': reclaimed}
+              if shutil.disk_usage(work).free < needed:
+                  raise ValueError('insufficient bounded source scratch')
+              staged = base / 'staged'
+              staged.mkdir(mode=0o700)
+              unassigned = work / 'sealed'
+              unassigned.mkdir(mode=0o700)
+              index = core.new_index()
+              packs = []
+              tag = receipt['source_run_id'] + '-' + receipt['source_run_attempt']
+              now = int(time.time())
+              for expected in EXPECTED:
+                  row = {'guide_id': expected['guide_id'], 'url': expected['url'],
+                         'archive_name': expected['archive_name'], 'sha256': expected['sha256'], 'size': expected['size'],
+                         'status': 'started'}
+                  receipt['objects'].append(row)
+                  save()
+                  local = work / ('source.' + expected['extension'])
+                  if (not fetch('MODCACHE:modsync-mod-cache/modsync-archives/objects/' + expected['sha256'], local, expected['size'] + 1)
+                          or not local.is_file() or local.is_symlink() or local.stat().st_size != expected['size']
+                          or seed.cache.digest(local) != expected['sha256']):
+                      raise ValueError('exact source object independent size/hash verification failed')
+                  blob = core.split_and_seal(local, unassigned, part_size=PART_SIZE)
+                  if (blob['sha256'] != expected['sha256'] or blob['size'] != expected['size']
+                          or len(blob['parts']) != math.ceil(expected['size'] / PART_SIZE)
+                          or [part['n'] for part in blob['parts']] != list(range(len(blob['parts'])))
+                          or sum(part['size'] for part in blob['parts']) != expected['size']):
+                      raise ValueError('sealed blob plaintext identity or consecutive parts mismatch')
+                  # Do not retain a second whole plaintext copy during recovery proof.
+                  local.unlink()
+                  paths = []
+                  indexed_parts = []
+                  for part in blob['parts']:
+                      name = part['stored_sha256'] + '.part'
+                      incoming = unassigned / name
+                      if (not re.fullmatch(r'[0-9a-f]{64}\.part', name) or incoming.is_symlink()
+                              or not incoming.is_file() or incoming.stat().st_size != part['stored_size']
+                              or seed.cache.digest(incoming) != part['stored_sha256']
+                              or not 0 < part['stored_size'] <= PART_SIZE + 1024):
+                          raise ValueError('sealed part stored payload verification failed')
+                      with incoming.open('rb') as handle:
+                          if handle.read(len(core.MAGIC)) != core.MAGIC:
+                              raise ValueError('sealed part magic mismatch')
+                      if not packs or packs[-1]['size'] + part['stored_size'] > PACK_LIMIT:
+                          if len(packs) >= 6:
+                              raise ValueError('ciphertext exceeds six bounded pack slots')
+                          pack_name = core.PACK_PREFIX + tag + '-' + str(len(packs))
+                          directory = staged / pack_name
+                          directory.mkdir(mode=0o700)
+                          packs.append({'name': pack_name, 'dir': directory, 'size': 0, 'parts': []})
+                      pack = packs[-1]
+                      output = pack['dir'] / name
+                      incoming.replace(output)
+                      pack['size'] += part['stored_size']
+                      pack['parts'].append(name)
+                      paths.append(output)
+                      indexed_parts.append({**part, 'pack': pack['name']})
+                  fresh = Path(tempfile.mkdtemp(prefix='recovery-', dir=work))
+                  try:
+                      joined = fresh / ('verified.' + expected['extension'])
+                      core.join_parts(paths, joined, expected['sha256'], expected['size'], sealed=True)
+                      if joined.stat().st_size != expected['size']:
+                          raise ValueError('fresh full-join recovery size mismatch')
+                  finally:
+                      shutil.rmtree(fresh, ignore_errors=True)
+                  index['blobs'][expected['sha256']] = {'sha256': expected['sha256'], 'size': expected['size'], 'parts': indexed_parts}
+                  row.update(status='full-join-authenticated', parts=indexed_parts)
+                  save()
+              if not 1 <= len(packs) <= 6 or set(index['blobs']) != {item['sha256'] for item in EXPECTED}:
+                  raise ValueError('incomplete bounded source ciphertext index')
+              all_files = set()
+              for pack in packs:
+                  actual = {path.name: path.stat().st_size for path in pack['dir'].iterdir() if path.is_file() and not path.is_symlink()}
+                  if (set(actual) != set(pack['parts']) or sum(actual.values()) != pack['size']
+                          or not 0 < pack['size'] <= PACK_LIMIT or all_files.intersection(actual)):
+                      raise ValueError('pack payload completeness or size mismatch')
+                  all_files.update(actual)
+                  index['packs'][pack['name']] = {'artifact_id': None, 'created_at': now, 'expires_at': None, 'size': pack['size']}
+              required = {part['stored_sha256'] + '.part' for blob in index['blobs'].values() for part in blob['parts']}
+              if required != all_files or list(unassigned.iterdir()):
+                  raise ValueError('index does not cover every and only staged ciphertext part')
+              core.dump_index(index, base / 'private-index.json')
+              receipt.update(status='verified-ciphertext-ready', pack_count=len(packs),
+                             pack_limit_bytes=PACK_LIMIT, packs=[{'name': pack['name'], 'stored_bytes': pack['size'], 'parts': len(pack['parts'])} for pack in packs])
+              save()
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                  output.write('pack_count=' + str(len(packs)) + '\n')
+                  for number in range(6):
+                      output.write('pack_' + str(number) + '=' + ('true' if number < len(packs) else 'false') + '\n')
+              print(json.dumps({'status': receipt['status'], 'objects': len(EXPECTED), 'packs': len(packs), 'plaintext_bytes': total_size}, sort_keys=True))
+          except BaseException as error:
+              receipt.update(status='failed', failure_category=type(error).__name__)
+              save()
+              raise SystemExit(1) from None
+          finally:
+              shutil.rmtree(work, ignore_errors=True)
+          PY_STAGE
+      - name: Upload verified ciphertext pack 0
+        id: pack_0
+        if: ${{ success() && steps.stage.outputs.pack_0 == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-0
+          path: ${{ runner.temp }}/k1-movie-ciphertext/staged/artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-0/*.part
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - name: Upload verified ciphertext pack 1
+        id: pack_1
+        if: ${{ success() && steps.stage.outputs.pack_1 == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-1
+          path: ${{ runner.temp }}/k1-movie-ciphertext/staged/artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-1/*.part
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - name: Upload verified ciphertext pack 2
+        id: pack_2
+        if: ${{ success() && steps.stage.outputs.pack_2 == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-2
+          path: ${{ runner.temp }}/k1-movie-ciphertext/staged/artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-2/*.part
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - name: Upload verified ciphertext pack 3
+        id: pack_3
+        if: ${{ success() && steps.stage.outputs.pack_3 == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-3
+          path: ${{ runner.temp }}/k1-movie-ciphertext/staged/artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-3/*.part
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - name: Upload verified ciphertext pack 4
+        id: pack_4
+        if: ${{ success() && steps.stage.outputs.pack_4 == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-4
+          path: ${{ runner.temp }}/k1-movie-ciphertext/staged/artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-4/*.part
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - name: Upload verified ciphertext pack 5
+        id: pack_5
+        if: ${{ success() && steps.stage.outputs.pack_5 == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-5
+          path: ${{ runner.temp }}/k1-movie-ciphertext/staged/artstore-pack-${{ github.run_id }}-${{ github.run_attempt }}-5/*.part
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - name: Validate every actual pack upload before publishing its index
+        id: index
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          GH_TOKEN: ${{ github.token }}
+          PACK_COUNT: ${{ steps.stage.outputs.pack_count }}
+          UPLOAD_RESULTS: >-
+            [{"outcome":"${{ steps.pack_0.outcome }}","id":"${{ steps.pack_0.outputs.artifact-id }}","digest":"${{ steps.pack_0.outputs.artifact-digest }}"},
+            {"outcome":"${{ steps.pack_1.outcome }}","id":"${{ steps.pack_1.outputs.artifact-id }}","digest":"${{ steps.pack_1.outputs.artifact-digest }}"},
+            {"outcome":"${{ steps.pack_2.outcome }}","id":"${{ steps.pack_2.outputs.artifact-id }}","digest":"${{ steps.pack_2.outputs.artifact-digest }}"},
+            {"outcome":"${{ steps.pack_3.outcome }}","id":"${{ steps.pack_3.outputs.artifact-id }}","digest":"${{ steps.pack_3.outputs.artifact-digest }}"},
+            {"outcome":"${{ steps.pack_4.outcome }}","id":"${{ steps.pack_4.outputs.artifact-id }}","digest":"${{ steps.pack_4.outputs.artifact-digest }}"},
+            {"outcome":"${{ steps.pack_5.outcome }}","id":"${{ steps.pack_5.outputs.artifact-id }}","digest":"${{ steps.pack_5.outputs.artifact-digest }}"}]
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python - <<'PY_INDEX'
+          import datetime, json, os, re, sys, time, urllib.request
+          from pathlib import Path
+          sys.path.insert(0, str(Path('source/tools/modsync-ci').resolve()))
+          import artstore_core as core
+          base = Path(os.environ['RUNNER_TEMP']) / 'k1-movie-ciphertext'
+          receipt = json.loads((base / 'evidence/provenance.json').read_text())
+          if (os.environ['GITHUB_REPOSITORY'] != 'kolto-labs/odyssey-ci'
+                  or os.environ['GITHUB_REF'] != 'refs/heads/ci/modsync-key-bootstrap-20261114'
+                  or receipt['status'] != 'verified-ciphertext-ready'):
+              raise ValueError('source scope or recovery proof missing')
+          count = int(os.environ['PACK_COUNT'])
+          index = core.load_index(base / 'private-index.json')
+          if count != receipt['pack_count'] or len(index['packs']) != count or not 1 <= count <= 6:
+              raise ValueError('actual pack count mismatch')
+          outcomes = json.loads(os.environ['UPLOAD_RESULTS'])
+          uploaded = []
+          tag = os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']
+          for number, outcome in enumerate(outcomes):
+              if number >= count:
+                  if outcome['outcome'] != 'skipped' or outcome['id'] or outcome['digest']:
+                      raise ValueError('unexpected extra ciphertext upload')
+                  continue
+              if (outcome['outcome'] != 'success' or not re.fullmatch(r'[1-9][0-9]*', outcome['id'])
+                      or not re.fullmatch(r'(?:sha256:)?[0-9a-f]{64}', outcome['digest'])):
+                  raise ValueError('actual ciphertext upload missing or incomplete')
+              expected_digest = outcome['digest'] if outcome['digest'].startswith('sha256:') else 'sha256:' + outcome['digest']
+              request = urllib.request.Request('https://api.github.com/repos/kolto-labs/odyssey-ci/actions/artifacts/' + outcome['id'],
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'})
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  payload = response.read(1024**2 + 1)
+              if len(payload) > 1024**2:
+                  raise ValueError('artifact metadata exceeds bound')
+              artifact = json.loads(payload)
+              name = core.PACK_PREFIX + tag + '-' + str(number)
+              run = artifact.get('workflow_run') or {}
+              if (artifact.get('id') != int(outcome['id']) or artifact.get('name') != name
+                      or artifact.get('digest') != expected_digest or artifact.get('expired')
+                      or run.get('id') != int(os.environ['GITHUB_RUN_ID']) or run.get('head_sha') != os.environ['GITHUB_SHA']
+                      or run.get('repository_id') != 1427366340 or run.get('head_repository_id') != 1427366340
+                      or not 0 < artifact.get('size_in_bytes', 0) <= 4 * 1024**3):
+                  raise ValueError('actual ciphertext artifact identity or digest mismatch')
+              expiry = int(datetime.datetime.fromisoformat(artifact['expires_at'].replace('Z', '+00:00')).timestamp())
+              if expiry <= time.time():
+                  raise ValueError('actual ciphertext artifact already expired')
+              core.set_pack_artifact(index, name, artifact['id'], expiry)
+              uploaded.append({key: artifact[key] for key in ('id', 'name', 'digest', 'size_in_bytes', 'expires_at', 'workflow_run')})
+          if len(uploaded) != count or any(pack['artifact_id'] is None for pack in index['packs'].values()):
+              raise ValueError('index publication requires every actual pack upload')
+          destination = base / 'index/index.json'
+          core.dump_index(index, destination)
+          receipt.update(status='all-ciphertext-packs-uploaded', source_artifacts=uploaded,
+                         index_sha256=__import__('hashlib').sha256(destination.read_bytes()).hexdigest())
+          (base / 'evidence/provenance.json').write_text(json.dumps(receipt, sort_keys=True, indent=2))
+          print(json.dumps({'verified_uploads': count, 'index_ready': True}, sort_keys=True))
+          PY_INDEX
+      - name: Publish index only after every verified pack upload
+        if: ${{ success() && steps.index.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: artstore-index-${{ github.run_id }}-${{ github.run_attempt }}-seed
+          path: ${{ runner.temp }}/k1-movie-ciphertext/index/index.json
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - name: Encrypt bounded provenance only
+        id: evidence
+        if: ${{ always() }}
+        shell: bash
+        env:
+          DIAGNOSTICS_ENCRYPTION_RECIPIENT: age1a5ye9zmxelf0fy6qt2t265463ts28kd0z2cjn95fjt9w3vcssvqqg5e4vg
+          STAGE_OUTCOME: ${{ steps.stage.outcome }}
+          INDEX_OUTCOME: ${{ steps.index.outcome }}
+        run: |
+          set -euo pipefail
+          umask 077
+          base="$RUNNER_TEMP/k1-movie-ciphertext"
+          mkdir -p "$base/evidence" "$base/encrypted"
+          python - <<'PY_EVIDENCE'
+          import json, os
+          from pathlib import Path
+          evidence = Path(os.environ['RUNNER_TEMP']) / 'k1-movie-ciphertext/evidence'
+          (evidence / 'step-outcome.json').write_text(json.dumps({
+              'stage_outcome': os.environ['STAGE_OUTCOME'], 'index_outcome': os.environ['INDEX_OUTCOME'],
+              'source_sha': os.environ['GITHUB_SHA'], 'source_run_id': os.environ['GITHUB_RUN_ID']}, sort_keys=True))
+          files = list(evidence.iterdir())
+          if (any(path.is_symlink() or not path.is_file() for path in files)
+                  or sum(path.stat().st_size for path in files) > 2 * 1024**2):
+              raise ValueError('provenance evidence size or file bound exceeded')
+          PY_EVIDENCE
+          if ! command -v age >/dev/null; then
+            sudo apt-get update -qq >/dev/null 2>&1
+            sudo apt-get install -y --no-install-recommends age >/dev/null 2>&1
+          fi
+          tar -C "$base/evidence" -czf - . | age -r "$DIAGNOSTICS_ENCRYPTION_RECIPIENT" -o "$base/encrypted/provenance.tar.gz.age"
+          echo "path=$base/encrypted/provenance.tar.gz.age" >> "$GITHUB_OUTPUT"
+      - name: Upload only encrypted provenance
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exact-unretained-ciphertext-provenance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.evidence.outputs.path }}
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove every private plaintext and staged ciphertext scratch copy
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python - <<'PY_CLEANUP'
+          import os, shutil
+          from pathlib import Path
+          shutil.rmtree(Path(os.environ['RUNNER_TEMP']) / 'k1-movie-ciphertext', ignore_errors=True)
+          PY_CLEANUP
