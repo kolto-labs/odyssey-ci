@@ -189,7 +189,12 @@ for file in list((BASE/'state/source-pages').glob('*.gz'))+list((ROOT/'pages').g
   source_urls=legacy_urls.get(str(file.relative_to(BASE))) or [url]
   for source_url in source_urls:parse(body,source_url)
   c.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',(parsed_prefix+file.name,m.stamp()));c.commit()
- except Exception as e:print(json.dumps({'event':'cached-page-error','class':type(e).__name__}),flush=True)
+ except Exception as e:
+  if isinstance(e,m.SourceError) and e.code=='source-browser-check-required':
+   c.rollback();c.execute("UPDATE pages SET state='pending',error=?,next_attempt=? WHERE path=?",(e.code,time.time()+300,str(file)));c.commit()
+   # Saved paths from the pre-runner source host retain their old directory.
+   c.execute("UPDATE pages SET state='pending',error=?,next_attempt=? WHERE path LIKE ?",(e.code,time.time()+300,'%/'+file.name));c.commit()
+  print(json.dumps({'event':'cached-page-error','class':type(e).__name__,'source_code':getattr(e,'code',None)}),flush=True)
 
 while True:
  for task in tasks:
