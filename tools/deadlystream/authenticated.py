@@ -100,7 +100,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                          html_bytes=len(body))
             raise RuntimeError('site did not acknowledge the provided signed-in session')
     validate_session()
-    runtime.refresh_source_policy(source)
+    runtime.refresh_source_policy(source, reader)
     runtime.emit('site-session-admitted', scope='public-linked downloads only; no private forum crawl')
     original_store = source.store_file
     def store(version, response, row_key, selector, filename_hint=None):

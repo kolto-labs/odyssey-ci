@@ -373,11 +373,22 @@ def source_frontier_drained():
     return True
 
 
-def refresh_source_policy(cache):
+def refresh_source_policy(cache, reader):
     policy = BASE / 'state/robots.txt'
     cached = policy.read_bytes() if policy.exists() else b''
     html = br'<(?:!doctype\s+html|html|head|title)(?:\s|>)'
     cached_valid = bool(re.search(br'^\s*user-agent\s*:', cached, re.I | re.M)) and not re.search(html, cached, re.I)
+    if not cached_valid:
+        saved = pointer(reader, PREFIX + 'source-policy/latest.json')
+        if saved:
+            record = json.loads(read_private(reader, saved, 65536))
+            recovered = record['body'].encode('utf-8')
+            if record['source_url'] != 'https://deadlystream.com/robots.txt' or hashlib.sha256(recovered).hexdigest() != record['sha256']:
+                raise ValueError('cached source policy provenance mismatch')
+            cached_valid = bool(re.search(br'^\s*user-agent\s*:', recovered, re.I | re.M)) and not re.search(html, recovered, re.I)
+            if cached_valid:
+                cached = recovered
+                policy.write_bytes(cached)
     try:
         response = cache.get('https://deadlystream.com/robots.txt')
     except Exception as error:
@@ -402,6 +413,14 @@ def refresh_source_policy(cache):
             return
         raise module('catalogue_cache').SourceError('source-browser-check-required', 403)
     policy.write_bytes(robots)
+    if re.search(br'^\s*user-agent\s*:', robots, re.I | re.M):
+        record = {'source_url': 'https://deadlystream.com/robots.txt', 'body': robots.decode('utf-8'),
+                  'sha256': hashlib.sha256(robots).hexdigest(),
+                  'observed_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                  'run_id': os.environ.get('GITHUB_RUN_ID')}
+        value = private_object(cache, 'source-policy/records', json.dumps(record).encode())
+        read_private(reader, value, 65536)
+        cache.put(PREFIX + 'source-policy/latest.json', json.dumps(value).encode())
     emit('proxied-source-admitted', http_status=200, robots_sha256=hashlib.sha256(robots).hexdigest())
 
 
@@ -453,7 +472,7 @@ def main():
         return
     # Explicit SOCKS for source only. TLS remains verified; never fall back direct.
     try:
-        refresh_source_policy(cache)
+        refresh_source_policy(cache, reader)
     except Exception:
         policy = rate_policy(cache, reader, channel)
         if policy['not_before'] > time.time():
