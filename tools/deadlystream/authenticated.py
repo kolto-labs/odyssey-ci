@@ -129,7 +129,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
         if row.get('kind') == 'resource' and row.get('status') in (401, 403, 404, 410) and row.get('published_alternatives_checked') is not True:
             return False
         return row.get('captured') or row.get('status') in (401, 403, 404, 410) or row.get('source_code') in (
-            'authenticated-source-returned-page', 'historical-download-unavailable', 'download-unavailable',
+            'authenticated-source-returned-page', 'source-returned-error-document', 'historical-download-unavailable', 'download-unavailable',
             'source-empty-download', 'source-version-has-no-files', 'empty-download-selection',
             'previously-listed-download-unavailable',
             'current-release-changed-before-download')
@@ -226,7 +226,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                      captured_resources=len(report['assets']), captured_native_items=len(report['linked']['items']))
     try:
         for row in discovery.execute("""SELECT * FROM assets WHERE state='unavailable'
-            AND (status IN (401,403) OR error='source-returned-page-instead-of-download')
+            AND (status IN (401,403) OR error IN ('source-returned-page-instead-of-download','source-returned-error-document'))
             ORDER BY CASE WHEN kind='attachment' THEN 0 ELSE 1 END,id"""):
             if time.monotonic() >= resource_end:
                 break
@@ -310,7 +310,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             persist()
         done_resources = {a['identity']: a for a in report['attempts'] if a.get('kind') == 'resource' and terminal(a)}
         candidates = discovery.execute("""SELECT * FROM assets WHERE state='unavailable'
-            AND (status IN (401,403) OR error='source-returned-page-instead-of-download')""")
+            AND (status IN (401,403) OR error IN ('source-returned-page-instead-of-download','source-returned-error-document'))""")
         report['remaining_resources'] = sum(not (done_resources.get(row['identity'], {}).get('captured') or
             done_resources.get(row['identity'], {}).get('published_selectors_sha256') == selector_digest(row)) for row in candidates)
         done_native = {(a['file_id'], a['revision']) for a in report['attempts'] if a.get('kind') == 'native' and terminal(a)}

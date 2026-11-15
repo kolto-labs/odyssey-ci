@@ -22,6 +22,7 @@ for table in ('pages','assets'):
  columns={r[1] for r in c.execute('PRAGMA table_info('+table+')')}
  if 'attempts' not in columns:c.execute('ALTER TABLE '+table+' ADD COLUMN attempts INTEGER DEFAULT 0')
  if 'next_attempt' not in columns:c.execute('ALTER TABLE '+table+' ADD COLUMN next_attempt REAL DEFAULT 0')
+ if 'error_evidence' not in columns:c.execute('ALTER TABLE '+table+' ADD COLUMN error_evidence TEXT')
 c.commit()
 TRANSIENT_STATUSES=(429,500,502,503,504)
 TRANSIENT_CODES=('source-browser-check-required','source-proxy-unavailable','source-proxy-required','source-connection-failed','source-dns-unavailable','source-backoff-required','ConnectionError','ReadTimeout','ClientError','OperationalError','RuntimeError','encryption-failed','remote-upload-integrity-failed','remote-receipt-integrity-failed','existing-object-metadata-invalid','concurrent-object-metadata-invalid')
@@ -223,6 +224,7 @@ def worker(table):
     import traceback
     print(json.dumps({'event':'download-processing-retry','reason':code,'frames':[{'file':Path(frame.filename).name,'line':frame.lineno,'function':frame.name} for frame in traceback.extract_tb(e.__traceback__)]}),flush=True)
    cx.rollback()
+   if getattr(e,'details',None):cx.execute('UPDATE '+table+' SET error_evidence=? WHERE '+where,(json.dumps(e.details,sort_keys=True),key))
    if table=='assets' and r['kind']=='attachment':
     cx.execute('UPDATE attachment_links SET tried_at=?,status=?,error=? WHERE identity=? AND url=?',(m.stamp(),status,code,r['identity'],r['url']))
     if status in (401,403,404,410) or code in ('source-returned-page-instead-of-download','source-empty-download','incomplete-source-file'):

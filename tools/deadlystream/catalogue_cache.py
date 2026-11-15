@@ -386,6 +386,12 @@ class Catalogue:
         try:
             for part in response.iter_content(1024*1024):
                 if not part: continue
+                if total == 0 and re.match(br'\s*45[0-9]\s+Policy violation', part[:128], re.I):
+                    evidence = self.chunk(part)
+                    raise SourceError('source-returned-error-document', response.status_code,
+                                      {'filename': filename, 'response_evidence': evidence,
+                                       'evidence_scope': 'first response block',
+                                       'retrieval_url': response.url})
                 if total == 0 and ('html' in response.headers.get('Content-Type', '').lower()
                         or part.lstrip().lower().startswith((b'<!doctype html', b'<html'))):
                     if re.search(br'<title[^>]*>\s*(?:one moment, please|just a moment)\.*\s*</title>', part[:65536], re.I):
