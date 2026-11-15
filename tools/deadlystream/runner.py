@@ -64,6 +64,7 @@ def setup():
         'identity': str(identity), 'age': shutil.which('age'), 'state': str(BASE / 'state'),
         'source_proxy': 'socks5h://127.0.0.1:40000', 'source_require_proxy': True,
         'source_interval_seconds': 1 / 3, 'source_rate_state': str(BASE / 'state'),
+        'page_import_version': 'v5',
         'source_policy_state': str(BASE / 'state'), 'catalogue_urls': str(BASE / 'file-urls.json'),
     }
     if not cfg['age']:
@@ -126,12 +127,13 @@ def rate_policy(cache, reader, channel, apply=False):
 
 def extract_checkpoint(archive):
     exact = {'whole-site/whole-site.sqlite', 'output/whole-site-inventory.json',
+             'whole-site/legacy-page-sources.json.gz',
              'state/robots.txt', 'state/source-not-before', 'state/source-interval', 'state/source-last-request',
              'whole-site/native-baseline.json.gz', 'whole-site/known-native-ids.json',
              'whole-site/linked-catalogue/catalogue.sqlite',
              'whole-site/asset-state/catalogue.sqlite', 'whole-site/asset-state/catalogue.sqlite-wal',
              'whole-site/asset-state/catalogue.sqlite-shm'}
-    directories = {'whole-site', 'output', 'state', 'whole-site/pages', 'whole-site/sitemaps',
+    directories = {'whole-site', 'output', 'state', 'state/source-pages', 'whole-site/pages', 'whole-site/sitemaps',
                    'whole-site/asset-state', 'whole-site/linked-catalogue',
                    'whole-site/linked-catalogue/page-observations',
                    'whole-site/linked-catalogue/page-observations/bytes',
@@ -143,7 +145,7 @@ def extract_checkpoint(archive):
             raise ValueError('unsafe checkpoint path')
         if entry.isdir() and name in directories:
             continue
-        allowed = (name in exact or re.fullmatch(r'whole-site/pages/[0-9a-f]{64}\.html\.gz', name)
+        allowed = (name in exact or re.fullmatch(r'(?:whole-site/pages|state/source-pages)/[0-9a-f]{64}\.html\.gz', name)
                    or re.fullmatch(r'whole-site/sitemaps/[0-9a-f]{64}\.xml', name)
                    or re.fullmatch(r'whole-site/linked-catalogue/page-observations/(?:bytes/[0-9a-f]{64}\.html\.gz|[0-9]+-[0-9]+-[0-9a-f]{12}\.json)', name)
                    or re.fullmatch(r'whole-site/linked-catalogue/source-pages/[A-Za-z0-9_.-]+\.gz', name))
@@ -219,9 +221,16 @@ def checkpoint(cache, reader, previous):
             counts['native_versions'] = dict(src.execute('SELECT status,count(*) FROM versions GROUP BY status'))
     index = private_object(cache, 'indexes', gzip.compress(json.dumps({'counts': counts, 'assets': rows, 'linked': linked}).encode(), mtime=0))
     package = BASE / 'checkpoint.tar.gz'
+    legacy_index = root / 'legacy-page-sources.json.gz'
+    legacy_names = set()
+    if legacy_index.exists():
+        legacy_names = {row['path'].split('/')[-1] for row in json.loads(gzip.decompress(legacy_index.read_bytes()))['pages']
+                        if row['path'].startswith('whole-site/pages/')}
     with tarfile.open(package, 'w:gz') as archive:
         archive.add(root / 'checkpoint.sqlite', arcname='whole-site/whole-site.sqlite')
         archive.add(BASE / 'output/whole-site-inventory.json', arcname='output/whole-site-inventory.json')
+        if legacy_index.exists():
+            archive.add(legacy_index, arcname='whole-site/legacy-page-sources.json.gz')
         if linked:
             archive.add(root / 'linked-checkpoint.sqlite', arcname='whole-site/linked-catalogue/catalogue.sqlite')
         for context in (root / 'linked-catalogue/page-observations', root / 'linked-catalogue/source-pages'):
@@ -238,7 +247,7 @@ def checkpoint(cache, reader, previous):
         # appears in the consistent SQLite backup. In-flight files are excluded.
         for old_path in page_paths:
             page = root / 'pages' / Path(old_path).name
-            if page.is_file():
+            if page.is_file() and page.name not in legacy_names:
                 archive.add(page, arcname='whole-site/pages/' + page.name)
     value = private_object(cache, 'checkpoints', package.read_bytes())
     recovered = read_private(reader, value, package.stat().st_size + 1024 * 1024)
@@ -322,7 +331,7 @@ def source_frontier_drained():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--minutes', type=int, default=25)
-    parser.add_argument('--mode', choices=('capture', 'deliver', 'both', 'probe', 'authenticated', 'audit'), default='both')
+    parser.add_argument('--mode', choices=('capture', 'deliver', 'both', 'probe', 'authenticated', 'audit', 'legacy-probe'), default='both')
     args = parser.parse_args()
     if not 1 <= args.minutes <= 240:
         raise ValueError('minutes must be between 1 and 240')
@@ -332,6 +341,15 @@ def main():
     cfg, cache, reader = setup()
     if args.mode == 'audit':
         module('audit').run(sys.modules[__name__], cfg, cache, reader)
+        return
+    if args.mode == 'legacy-probe':
+        if not pointer(reader, PREFIX + 'legacy-pages/latest.json'):
+            emit('legacy-page-export-not-ready')
+            raise SystemExit(2)
+        restore(cfg, cache, reader)
+        proof = module('legacy_pages').restore(sys.modules[__name__], cfg, reader, force=True)
+        proof.update(at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), run_id=os.environ.get('GITHUB_RUN_ID'))
+        cache.put(PREFIX + 'legacy-pages/verification.json', json.dumps(proof).encode())
         return
     if args.mode == 'deliver':
         end = time.monotonic() + args.minutes * 60
@@ -369,6 +387,7 @@ def main():
     if args.mode == 'probe':
         deliver(cfg, cache, reader)
         return
+    module('legacy_pages').restore(sys.modules[__name__], cfg, reader)
     try:
         module('sitemaps').refresh(sys.modules[__name__], cache, reader)
     except Exception as error:

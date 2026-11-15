@@ -178,11 +178,17 @@ pool=concurrent.futures.ThreadPoolExecutor(max_workers=14)
 tasks=[pool.submit(worker,'pages') for _ in range(6)]+[pool.submit(worker,'assets') for _ in range(8)]
 # Reuse preserved catalogue HTML; no extra origin requests. Local-only originals are imported separately.
 saved_urls={r['path']:r['url'] for r in c.execute("SELECT path,url FROM pages WHERE path IS NOT NULL")}
+legacy_sources=ROOT/'legacy-page-sources.json.gz'
+legacy_urls={}
+if legacy_sources.exists():legacy_urls={row['path']:row['urls'] for row in json.loads(gzip.decompress(legacy_sources.read_bytes()))['pages']}
+parsed_prefix='parsed-'+cfg.get('page_import_version','v5')+':'
 for file in list((BASE/'state/source-pages').glob('*.gz'))+list((ROOT/'pages').glob('*.gz')):
- if c.execute('SELECT 1 FROM meta WHERE key=?',('parsed-v5:'+file.name,)).fetchone():continue
+ if c.execute('SELECT 1 FROM meta WHERE key=?',(parsed_prefix+file.name,)).fetchone():continue
  try:
   body=gzip.decompress(file.read_bytes());canonical=re.search(br'<link[^>]+rel=[\"\']canonical[\"\'][^>]+href=[\"\']([^\"\']+)',body);url=saved_urls.get(str(file)) or (canonical[1].decode('utf-8') if canonical else 'https://deadlystream.com/files/')
-  parse(body,url);c.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('parsed-v5:'+file.name,m.stamp()));c.commit()
+  source_urls=legacy_urls.get(str(file.relative_to(BASE))) or [url]
+  for source_url in source_urls:parse(body,source_url)
+  c.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',(parsed_prefix+file.name,m.stamp()));c.commit()
  except Exception as e:print(json.dumps({'event':'cached-page-error','class':type(e).__name__}),flush=True)
 
 while True:

@@ -2,6 +2,10 @@ name: Audit Deadly Stream catalogue provenance
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        type: choice
+        options: [audit, legacy-probe]
+        default: audit
       minutes:
         type: string
         default: '120'
@@ -37,7 +41,7 @@ jobs:
           DEADLYSTREAM_CACHE_BUCKET: ${{ vars.DEADLYSTREAM_CACHE_BUCKET }}
           DEADLYSTREAM_CACHE_ENDPOINT: ${{ vars.DEADLYSTREAM_CACHE_ENDPOINT }}
           DEADLYSTREAM_CACHE_ENCRYPTION_RECIPIENT: ${{ vars.DEADLYSTREAM_CACHE_ENCRYPTION_RECIPIENT }}
-          PRESERVATION_MODE: audit
+          PRESERVATION_MODE: ${{ inputs.mode }}
           PRESERVATION_MINUTES: ${{ inputs.minutes }}
         run: python tools/deadlystream/runner.py --mode "$PRESERVATION_MODE" --minutes "$PRESERVATION_MINUTES"
       - name: Remove transient credentials and plaintext workspace
