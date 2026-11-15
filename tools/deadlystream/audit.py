@@ -8,7 +8,7 @@ import threading
 import time
 
 
-def run(runtime, cfg, cache, reader):
+def run(runtime, cfg, cache, reader, response_probe=False):
     started = time.monotonic()
     public = runtime.pointer(reader, runtime.PREFIX + 'latest.json')
     member = runtime.pointer(reader, runtime.PREFIX + 'authenticated/latest.json')
@@ -16,7 +16,8 @@ def run(runtime, cfg, cache, reader):
     member_index = json.loads(gzip.decompress(runtime.read_private(reader, member, 128 * 1024**2))) if member else {}
     native_pointer, native = reader.snapshot()
     work = []
-    for source in (native, public_index.get('linked') or {}, member_index.get('linked') or {}):
+    catalogues = () if response_probe else (native, public_index.get('linked') or {}, member_index.get('linked') or {})
+    for source in catalogues:
         versions = {(row['file_id'], row['revision']): row for row in source.get('versions', [])}
         for item in source.get('items', []):
             version = versions.get((item['file_id'], item['revision']))
@@ -24,7 +25,10 @@ def run(runtime, cfg, cache, reader):
                 raise ValueError('manifest association has no version')
             work.append((item, version, False))
     for source in (public_index, member_index):
-        for row in source.get('assets', []):
+        assets = source.get('assets', [])
+        if response_probe:
+            assets = sorted(assets, key=lambda row: row.get('at') or '', reverse=True)[:500]
+        for row in assets:
             if row['state'] != 'captured':
                 continue
             revision = 'site-resource-' + hashlib.sha256(row['identity'].encode()).hexdigest()[:24]
@@ -65,6 +69,13 @@ def run(runtime, cfg, cache, reader):
             for chunk in manifest['chunks']:
                 if chunk['key'] != 'objects/' + namespace + '/' + chunk['sha256'] + '.age' or not re.fullmatch('[0-9a-f]{64}', chunk['cipher_sha256']):
                     raise ValueError('chunk-address')
+            if manifest.get('kind') != 'page' and 'html' in manifest.get('source_headers', {}).get('Content-Type', '').lower() and manifest['chunks']:
+                first = manifest['chunks'][0]
+                body = remote.encrypted(first['key'], first['cipher_sha256'], 17 * 1024**2)
+                if len(body) != first['size'] or hashlib.sha256(body).hexdigest() != first['sha256']:
+                    raise ValueError('source-response-chunk-integrity')
+                if re.search(br'<title[^>]*>\s*(?:one moment, please|just a moment)\.*\s*</title>', body[:65536], re.I):
+                    raise ValueError('browser-check-stored-as-payload')
             return None
         except Exception as error:
             return {'manifest': key, 'category': str(error) if isinstance(error, ValueError) else type(error).__name__}
@@ -82,10 +93,11 @@ def run(runtime, cfg, cache, reader):
               'associations': len(work), 'manifests': len(grouped), 'verified': checked - len(errors),
               'errors': errors, 'seconds': round(time.monotonic() - started, 2),
               'scope': 'Immutable manifest ciphertext, catalogue association, source provenance, authenticated provenance, chunk addresses and lengths. Payload bytes verified during Drive delivery.'}
-    value = runtime.private_object(cache, 'audits', gzip.compress(json.dumps(report).encode(), mtime=0))
+    directory = 'response-audits' if response_probe else 'audits'
+    value = runtime.private_object(cache, directory, gzip.compress(json.dumps(report).encode(), mtime=0))
     runtime.read_private(reader, value, 128 * 1024**2)
     value.update(manifests=len(grouped), errors=len(errors), at=report['at'])
-    cache.put(runtime.PREFIX + 'audits/latest.json', json.dumps(value).encode())
+    cache.put(runtime.PREFIX + directory + '/latest.json', json.dumps(value).encode())
     runtime.emit('provenance-audit-finished', manifests=len(grouped), errors=len(errors))
     if errors:
         raise RuntimeError('provenance audit needs inspection')

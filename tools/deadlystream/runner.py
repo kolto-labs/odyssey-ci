@@ -348,7 +348,7 @@ def refresh_source_policy(cache):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--minutes', type=int, default=25)
-    parser.add_argument('--mode', choices=('capture', 'deliver', 'both', 'probe', 'authenticated', 'audit', 'legacy-probe'), default='both')
+    parser.add_argument('--mode', choices=('capture', 'deliver', 'both', 'probe', 'authenticated', 'audit', 'legacy-probe', 'response-probe'), default='both')
     args = parser.parse_args()
     if not 1 <= args.minutes <= 240:
         raise ValueError('minutes must be between 1 and 240')
@@ -356,8 +356,8 @@ def main():
         emit('site-session-setting-required', setting='DEADLYSTREAM_SESSION_COOKIES')
         raise SystemExit(2)
     cfg, cache, reader = setup()
-    if args.mode == 'audit':
-        module('audit').run(sys.modules[__name__], cfg, cache, reader)
+    if args.mode in ('audit', 'response-probe'):
+        module('audit').run(sys.modules[__name__], cfg, cache, reader, response_probe=args.mode == 'response-probe')
         return
     if args.mode == 'legacy-probe':
         if not pointer(reader, PREFIX + 'legacy-pages/latest.json'):

@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [audit, legacy-probe]
+        options: [audit, legacy-probe, response-probe]
         default: audit
       minutes:
         type: string
@@ -12,7 +12,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: deadlystream-cloud-audit
+  group: deadlystream-cloud-audit-${{ inputs.mode }}
   cancel-in-progress: false
 jobs:
   preserve:

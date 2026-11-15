@@ -343,6 +343,10 @@ class Catalogue:
         try:
             for part in response.iter_content(1024*1024):
                 if not part: continue
+                if total == 0 and ('html' in response.headers.get('Content-Type', '').lower()
+                        or part.lstrip().lower().startswith((b'<!doctype html', b'<html'))):
+                    if re.search(br'<title[^>]*>\s*(?:one moment, please|just a moment)\.*\s*</title>', part[:65536], re.I):
+                        raise SourceError('source-browser-check-required', 403)
                 whole.update(part); total+=len(part); pending.extend(part)
                 while len(pending)>=CHUNK:
                     chunk=bytes(pending[:CHUNK]);del pending[:CHUNK]
