@@ -235,7 +235,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
         files.update({f['id']: f for f in linked.get('files', [])})
         all_versions.update({(v['file_id'], v['revision']): v for v in linked.get('versions', [])})
         linked_version_ids = {v['file_id'] for v in linked.get('versions', [])}
-        scan_targets = [f for f in linked.get('files', []) if f['status'] == 'failed' or f['id'] not in linked_version_ids]
+        scan_targets = [f for f in linked.get('files', []) if f['status'] != 'scanned' or f['id'] not in linked_version_ids]
         for file in scan_targets:
             if time.monotonic() >= end:
                 break
