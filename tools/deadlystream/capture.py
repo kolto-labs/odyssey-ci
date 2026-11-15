@@ -32,8 +32,21 @@ def source():
 WEB_PAGE_SUFFIXES={'html','htm','shtml','php','asp','aspx','jsp','cgi','cfm','action','do'}
 
 def downloadable_path(path):
- suffix=unquote(path).rsplit('/',1)[-1].rpartition('.')[2].lower()
- return bool(re.fullmatch(r'[a-z0-9]{1,12}',suffix)) and suffix not in WEB_PAGE_SUFFIXES
+ name,separator,suffix=unquote(path).rsplit('/',1)[-1].rpartition('.')
+ return bool(separator and name and re.fullmatch(r'[a-z0-9]{1,12}',suffix.lower())) and suffix.lower() not in WEB_PAGE_SUFFIXES
+
+def share_link(value):
+ p=urlsplit(value)
+ return ((p.hostname in ('x.com','twitter.com') and p.path.rstrip('/') in ('/share','/intent/tweet'))
+         or (p.hostname in ('reddit.com','www.reddit.com') and p.path.rstrip('/')=='/submit')
+         or (p.hostname=='bsky.app' and p.path.rstrip('/')=='/intent/compose'))
+
+def provider_download(value):
+ p=urlsplit(value);host=(p.hostname or '').removeprefix('www.')
+ return ((host=='mediafire.com' and p.path.startswith(('/file/','/download/')))
+         or (host in ('drive.google.com','docs.google.com') and (p.path.startswith(('/file/d/','/uc','/open'))))
+         or (host=='dropbox.com' and p.path.startswith(('/s/','/scl/fi/')))
+         or (host=='github.com' and '/releases/download/' in p.path))
 
 def normalize(value,page):
  value=value.strip().replace('&amp;','&').replace('\\/','/')
@@ -53,7 +66,8 @@ OFFICIAL_PATHS={urlsplit(normalize(u,'https://deadlystream.com/')).path for u in
 def classify(u):
  p=urlsplit(u);q=dict(parse_qsl(p.query));path=p.path
  if p.hostname not in ('deadlystream.com','www.deadlystream.com'):
-  if downloadable_path(path):return 'asset','external-linked-file'
+  if share_link(u):return
+  if downloadable_path(path) or provider_download(u):return 'asset','external-linked-file'
   return
  if q.get('do') and q['do']!='download':return
  if path.endswith('/index.php') and q.get('app')=='core' and q.get('module')=='attach' and q.get('section')=='attach' and q.get('attach_id','').isdigit():return 'asset','legacy-attachment'
@@ -75,7 +89,7 @@ def queue(u,page,label=''):
  u=normalize(u,page)
  if not u:return
  cl=classify(u)
- if not cl and label=='download-attribute' and not (urlsplit(u).hostname in ('deadlystream.com','www.deadlystream.com') and '/files/file/' in urlsplit(u).path):
+ if not cl and label in ('download-attribute','download-link-text') and not share_link(u) and not (urlsplit(u).hostname in ('deadlystream.com','www.deadlystream.com') and '/files/file/' in urlsplit(u).path):
   cl=('asset','external-linked-file' if urlsplit(u).hostname not in ('deadlystream.com','www.deadlystream.com') else 'linked-download')
  if not cl:
   if urlsplit(u).hostname in ('deadlystream.com','www.deadlystream.com') and '/files/file/' in urlsplit(u).path and dict(parse_qsl(urlsplit(u).query)).get('do')=='download':queue(urlunsplit(('https','deadlystream.com',urlsplit(u).path,'','')),page,'native-download-parent')
@@ -93,9 +107,10 @@ def queue(u,page,label=''):
    cx.execute("UPDATE assets SET url=?,state=CASE WHEN state='unavailable' AND status IN (403,404) THEN 'pending' ELSE state END WHERE identity=? AND url<>? AND state<>'captured'",(u,identity,u))
 
 class Links(HTMLParser):
- def __init__(self,url):super().__init__(convert_charrefs=True);self.url=url
+ def __init__(self,url):super().__init__(convert_charrefs=True);self.url=url;self.anchor=None;self.anchor_text=[]
  def handle_starttag(self,tag,attrs):
   d=dict(attrs)
+  if tag=='a':self.anchor=d.get('href');self.anchor_text=[]
   if tag=='a' and 'download' in d and d.get('href'):queue(d['href'],self.url,'download-attribute')
   for attr in ('href','src','data-src','data-fullurl','data-ipslightbox-src','data-ipslightbox-href','poster','content'):
    v=d.get(attr)
@@ -103,6 +118,12 @@ class Links(HTMLParser):
   for attr in ('srcset','data-srcset'):
    if d.get(attr):
     for v in d[attr].split(','):queue(v.strip().split(' ')[0],self.url,attr)
+ def handle_data(self,data):
+  if self.anchor:self.anchor_text.append(data)
+ def handle_endtag(self,tag):
+  if tag=='a' and self.anchor:
+   if re.search(r'\b(download|mirror)\b',' '.join(self.anchor_text),re.I):queue(self.anchor,self.url,'download-link-text')
+   self.anchor=None;self.anchor_text=[]
  handle_startendtag=handle_starttag
 
 def parse(body,url):
@@ -135,11 +156,14 @@ for table in ('pages','assets'):
  # Retain their attempt history and backoff while keeping the work retryable.
  marks=','.join('?' for _ in TRANSIENT_CODES)
  c.execute("UPDATE "+table+" SET state='pending' WHERE state='unavailable' AND (status IN (429,500,502,503,504) OR error IN ("+marks+"))",TRANSIENT_CODES)
+# Retain discovered references while excluding verified sharing actions from file retrieval.
+for row in c.execute("SELECT id,url FROM assets WHERE kind='external-linked-file' AND state IN ('pending','unavailable')").fetchall():
+ if share_link(row['url']):c.execute("UPDATE assets SET state='non-download-link',error='social-sharing-action' WHERE id=?",(row['id'],))
 c.commit()
 
 def claim(cx,table):
  cx.execute('BEGIN IMMEDIATE')
- order="CASE WHEN kind='gallery-original' THEN 0 WHEN kind IN ('attachment','legacy-attachment','linked-download','linked-file','external-linked-file') OR lower(url) GLOB '*.zip*' OR lower(url) GLOB '*.rar*' OR lower(url) GLOB '*.7z*' OR lower(url) GLOB '*.exe*' THEN 1 WHEN kind='uploaded-resource' THEN 2 ELSE 3 END,id" if table=='assets' else "CASE WHEN url LIKE '%/gallery/image/%' THEN 0 WHEN url LIKE '%/files/file/%' AND (url LIKE '%tab=comments%' OR url LIKE '%tab=reviews%') THEN 1 WHEN url LIKE '%/topic/%' THEN 2 ELSE 3 END,url"
+ order="CASE WHEN kind='gallery-original' THEN 0 WHEN kind IN ('attachment','legacy-attachment','linked-download') OR lower(url) GLOB '*.zip*' OR lower(url) GLOB '*.rar*' OR lower(url) GLOB '*.7z*' OR lower(url) GLOB '*.exe*' THEN 1 WHEN kind='uploaded-resource' THEN 2 ELSE 3 END,id" if table=='assets' else "CASE WHEN url LIKE '%/gallery/image/%' THEN 0 WHEN url LIKE '%/files/file/%' AND (url LIKE '%tab=comments%' OR url LIKE '%tab=reviews%') THEN 1 WHEN url LIKE '%/topic/%' THEN 2 ELSE 3 END,url"
  row=cx.execute(f"SELECT * FROM {table} WHERE state='pending' AND next_attempt<={time.time()} ORDER BY {order} LIMIT 1").fetchone()
  if row:cx.execute(f"UPDATE {table} SET state='fetching',attempts=attempts+1 WHERE "+('id=?' if table=='assets' else 'url=?'),(row['id'] if table=='assets' else row['url'],))
  cx.commit();return row
