@@ -166,7 +166,9 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             try:
                 response = source.get(url)
                 content_type = response.headers.get('Content-Type', '').lower()
-                if ('html' in content_type or 'json' in content_type) and 'attachment' not in response.headers.get('Content-Disposition', '').lower():
+                if (('html' in content_type or 'json' in content_type)
+                        and 'attachment' not in response.headers.get('Content-Disposition', '').lower()
+                        and not urlsplit(url).path.startswith('/uploads/')):
                     if 'html' in content_type:
                         source.html(response)
                     else:
@@ -176,7 +178,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                 revision = 'site-resource-' + hashlib.sha256(row['identity'].encode()).hexdigest()[:24]
                 source.db.execute('INSERT OR IGNORE INTO files(id,url) VALUES(?,?)', (file_id, url))
                 source.db.execute('INSERT OR IGNORE INTO versions(file_id,revision,label,history_id,source_url) VALUES(?,?,?,?,?)',
-                                  (file_id, revision, row['kind'], '0', url))
+                                  (file_id, revision, 'published native selector; release association not inferred' if row['kind'] == 'published-native-selector' else row['kind'], '0', url))
                 source.db.commit()
                 version = dict(source.db.execute('SELECT * FROM versions WHERE file_id=? AND revision=?', (file_id, revision)).fetchone())
                 version['source_url'] = url
@@ -221,7 +223,6 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                      captured_resources=len(report['assets']), captured_native_items=len(report['linked']['items']))
     try:
         for row in discovery.execute("""SELECT * FROM assets WHERE state='unavailable'
-            AND kind IN ('attachment','legacy-attachment','linked-download','linked-file')
             AND (status IN (401,403) OR error='source-returned-page-instead-of-download')
             ORDER BY CASE WHEN kind='attachment' THEN 0 ELSE 1 END,id"""):
             if time.monotonic() >= resource_end:
@@ -306,7 +307,6 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             persist()
         done_resources = {a['identity']: a for a in report['attempts'] if a.get('kind') == 'resource' and terminal(a)}
         candidates = discovery.execute("""SELECT * FROM assets WHERE state='unavailable'
-            AND kind IN ('attachment','legacy-attachment','linked-download','linked-file')
             AND (status IN (401,403) OR error='source-returned-page-instead-of-download')""")
         report['remaining_resources'] = sum(not (done_resources.get(row['identity'], {}).get('captured') or
             done_resources.get(row['identity'], {}).get('published_selectors_sha256') == selector_digest(row)) for row in candidates)
