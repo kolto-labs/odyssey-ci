@@ -45,7 +45,7 @@ def classify(u):
  if path.endswith('/index.php') and q.get('app')=='core' and q.get('module')=='attach' and q.get('section')=='attach' and q.get('attach_id','').isdigit():return 'asset','legacy-attachment'
  if path.endswith('/index.php') and q.get('app')=='downloads' and q.get('module')=='display' and q.get('section')=='screenshot':return 'page',u
  if path.startswith('/uploads/'):return 'asset','uploaded-resource'
- if re.search(r'\.(?:zip|rar|7z|jar|dmg|apk|tgz|tar|exe|msi|pdf|txt|docx?|xlsx?|lua|nss|2da|tga|dds|mp[34]|wav|png|jpe?g|gif|webp|psd|xcf|blend|mdl|mdx|tpc|gz|bz2|xz)$',path,re.I):return 'asset','linked-file'
+ if re.search(r'\.(?:zip|rar|7z|jar|dmg|apk|tgz|tar|exe|msi|pdf|txt|docx?|xlsx?|lua|nss|ncs|2da|tga|dds|mp[34]|wav|ogg|flac|bik|png|jpe?g|gif|webp|psd|xcf|blend|mdl|mdx|tpc|tlk|dlg|uti|utc|utp|utw|utm|uts|utt|ute|utd|are|git|gff|ifo|mod|rim|erf|lyt|vis|wok|pwk|dwk|bif|key|fbx|obj|stl|ttf|otf|gz|bz2|xz|(?:zip|7z)\.\d{3})$',path,re.I):return 'asset','linked-file'
  if path.endswith('/attachment.php') and q.get('id','').isdigit():return 'asset','attachment'
  if q.get('do')=='download' and path.startswith('/gallery/'):return 'asset','gallery-original'
  if q.get('do')=='download' and '/files/file/' not in path:return 'asset','linked-download'
@@ -179,10 +179,10 @@ tasks=[pool.submit(worker,'pages') for _ in range(6)]+[pool.submit(worker,'asset
 # Reuse preserved catalogue HTML; no extra origin requests. Local-only originals are imported separately.
 saved_urls={r['path']:r['url'] for r in c.execute("SELECT path,url FROM pages WHERE path IS NOT NULL")}
 for file in list((BASE/'state/source-pages').glob('*.gz'))+list((ROOT/'pages').glob('*.gz')):
- if c.execute('SELECT 1 FROM meta WHERE key=?',('parsed-v4:'+file.name,)).fetchone():continue
+ if c.execute('SELECT 1 FROM meta WHERE key=?',('parsed-v5:'+file.name,)).fetchone():continue
  try:
   body=gzip.decompress(file.read_bytes());canonical=re.search(br'<link[^>]+rel=[\"\']canonical[\"\'][^>]+href=[\"\']([^\"\']+)',body);url=saved_urls.get(str(file)) or (canonical[1].decode('utf-8') if canonical else 'https://deadlystream.com/files/')
-  parse(body,url);c.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('parsed-v4:'+file.name,m.stamp()));c.commit()
+  parse(body,url);c.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('parsed-v5:'+file.name,m.stamp()));c.commit()
  except Exception as e:print(json.dumps({'event':'cached-page-error','class':type(e).__name__}),flush=True)
 
 while True:

@@ -164,7 +164,10 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                 response = source.get(url)
                 content_type = response.headers.get('Content-Type', '').lower()
                 if ('html' in content_type or 'json' in content_type) and 'attachment' not in response.headers.get('Content-Disposition', '').lower():
-                    response.close()
+                    if 'html' in content_type:
+                        source.html(response)
+                    else:
+                        response.close()
                     raise catalogue_module.SourceError('authenticated-source-returned-page', response.status_code)
                 file_id = -row['id']
                 revision = 'site-resource-' + hashlib.sha256(row['identity'].encode()).hexdigest()[:24]
@@ -186,6 +189,8 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                 return captured
             except catalogue_module.SourceError as error:
                 last_error = error
+                if error.code == 'source-browser-check-required':
+                    raise
                 if error.status not in (401, 403, 404, 410) and error.code not in ('authenticated-source-returned-page', 'source-empty-download'):
                     raise
         raise last_error
