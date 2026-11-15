@@ -38,7 +38,7 @@ permissions:
 jobs:
   acquire:
     if: github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/main'
-    runs-on: ${{ inputs.runner == 'vps' && fromJSON(inputs.mode == 'authenticated' && '["self-hosted","linux","x64","deadlystream-member"]' || '["self-hosted","linux","x64","deadlystream-capture"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ inputs.runner == 'vps' && fromJSON(inputs.mode == 'authenticated' && '["self-hosted","linux","ARM64","deadlystream-member"]' || '["self-hosted","linux","ARM64","deadlystream-capture"]') || 'ubuntu-24.04' }}
     timeout-minutes: 300
     steps:
       - name: Select the cloud browser directory
