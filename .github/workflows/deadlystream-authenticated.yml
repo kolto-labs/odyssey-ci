@@ -30,6 +30,7 @@ jobs:
         run: |
           python -m pip install playwright==1.65.2
           python -m playwright install --with-deps chromium
+          command -v xvfb-run >/dev/null || sudo apt-get install -y -qq xvfb
       - name: Download directly to encrypted cloud storage and scoped Drive uploads
         env:
           DEADLYSTREAM_WORK_ROOT: ${{ runner.temp }}/deadlystream-preservation
@@ -44,7 +45,7 @@ jobs:
           DEADLYSTREAM_SESSION_COOKIES: ${{ secrets.DEADLYSTREAM_SESSION_COOKIES }}
           PRESERVATION_MODE: authenticated
           PRESERVATION_MINUTES: ${{ inputs.minutes }}
-        run: python tools/deadlystream/runner.py --mode "$PRESERVATION_MODE" --minutes "$PRESERVATION_MINUTES"
+        run: xvfb-run -a python tools/deadlystream/runner.py --mode "$PRESERVATION_MODE" --minutes "$PRESERVATION_MINUTES"
       - name: Remove transient credentials and plaintext workspace
         if: always()
         env:

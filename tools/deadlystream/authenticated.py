@@ -41,7 +41,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
         from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
         source.pace()
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(proxy={'server': 'socks5://127.0.0.1:40000'})
+            browser = playwright.chromium.launch(headless=False, proxy={'server': 'socks5://127.0.0.1:40000'})
             # Use Chromium's ordinary, internally consistent browser headers.
             context = browser.new_context()
             context.add_cookies([{**cookie, 'httpOnly': True} for cookie in cookies])
