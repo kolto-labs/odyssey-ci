@@ -44,6 +44,12 @@ def failure(table, row, error):
 for table in ('files', 'versions'):
     marks = ','.join('?' for _ in TRANSIENT_CODES)
     cache.db.execute("UPDATE " + table + " SET status='pending' WHERE error IN (" + marks + ")", tuple(TRANSIENT_CODES))
+cache.db.execute("UPDATE files SET status='pending' WHERE error='source-http-error'")
+marks = ','.join('?' for _ in TRANSIENT_CODES)
+cache.db.execute("""UPDATE versions SET status='pending'
+    WHERE error IN ('some-download-variants-unavailable','previously-listed-download-unavailable')
+      AND EXISTS(SELECT 1 FROM gaps WHERE gaps.file_id=versions.file_id AND gaps.revision=versions.revision
+                 AND (gaps.category IN (""" + marks + ") OR gaps.http_status IN (429,500,502,503,504)))", tuple(TRANSIENT_CODES))
 cache.db.commit()
 while True:
     with sqlite3.connect(ROOT / 'whole-site.sqlite') as discovery:
