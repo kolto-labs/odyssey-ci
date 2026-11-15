@@ -22,6 +22,7 @@ import time
 HERE = Path(__file__).resolve().parent
 BASE = Path(os.environ.get('DEADLYSTREAM_WORK_ROOT', '/tmp/deadlystream-preservation'))
 PREFIX = 'whole-site/actions/'
+LAST_COMPLETED_DELIVERY = None
 
 
 def module(name):
@@ -257,9 +258,12 @@ def checkpoint(cache, reader, previous):
 
 
 def deliver(cfg, cache, reader):
+    global LAST_COMPLETED_DELIVERY
     jobs = pointer(reader, PREFIX + 'drive-jobs/latest.json')
     if not jobs:
         emit('drive-queue-empty')
+        return
+    if jobs['cipher_sha256'] == LAST_COMPLETED_DELIVERY:
         return
     todo = json.loads(read_private(reader, jobs, 16 * 1024 * 1024))
     receipts = []
@@ -285,8 +289,10 @@ def deliver(cfg, cache, reader):
         finally:
             job_file.unlink(missing_ok=True)
             result_file.unlink(missing_ok=True)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         receipts = list(pool.map(run, todo['jobs']))
+    if all(receipt.get('ok') for receipt in receipts):
+        LAST_COMPLETED_DELIVERY = jobs['cipher_sha256']
     emit('drive-cloud-delivery', uploaded=sum(bool(x.get('ok')) for x in receipts),
          failed=sum(not x.get('ok') for x in receipts), bytes=sum(x.get('size', 0) for x in receipts if x.get('ok')))
 
@@ -368,7 +374,7 @@ def main():
                 delivery_task = None
             if args.mode == 'both' and delivery_task is None and time.monotonic() >= next_delivery:
                 delivery_task = delivery_pool.submit(deliver, cfg, cache, reader)
-                next_delivery = time.monotonic() + 60
+                next_delivery = time.monotonic() + 5
             if time.monotonic() >= next_checkpoint:
                 previous = checkpoint(cache, reader, previous)
                 next_checkpoint = time.monotonic() + 300
