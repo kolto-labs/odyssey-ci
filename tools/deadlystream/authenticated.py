@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sqlite3
 import time
+from bs4 import BeautifulSoup
 
 
 def run(runtime, cfg, cache, reader, minutes):
@@ -28,12 +29,18 @@ def run(runtime, cfg, cache, reader, minutes):
         source.session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'],
                                    path=cookie['path'], secure=True)
     # A cookie's presence is not authorization. Require the site to acknowledge it.
-    response = source.get('https://deadlystream.com/files/file/3193-pazaak-deck-collection/')
+    try:
+        response = source.get('https://deadlystream.com/files/file/3193-pazaak-deck-collection/')
+    except Exception as error:
+        runtime.emit('site-session-validation-denied', status=getattr(error, 'status', 0), category=type(error).__name__)
+        raise
     body = response.content
     response.close()
     if re.search(br'<h[1-6][^>]*>\s*(?:Banned|Awaiting Validation)', body, re.I):
         raise RuntimeError('site account is restricted; authenticated capture stopped')
-    if not re.search(rb'/profile/' + member.encode() + rb'[-/]', body):
+    nav = BeautifulSoup(body, 'html.parser').select_one('#elUserNav')
+    if not nav or not any(re.search(r'/profile/' + member + r'[-/]', a.get('href', '')) for a in nav.select('a[href]')):
+        runtime.emit('site-session-not-accepted')
         raise RuntimeError('site did not acknowledge the provided signed-in session')
     runtime.emit('site-session-admitted', scope='public-linked downloads only; no private forum crawl')
     original_store = source.store_file
@@ -52,7 +59,8 @@ def run(runtime, cfg, cache, reader, minutes):
             fields = [key for key in row if key in columns]
             source.db.execute('INSERT OR IGNORE INTO ' + table + '(' + ','.join(fields) + ') VALUES(' + ','.join('?' for _ in fields) + ')', tuple(row[key] for key in fields))
     source.db.commit()
-    attempted = {row['identity'] for row in report['attempts'] if row.get('kind') == 'resource'}
+    attempted = {row['identity'] for row in report['attempts'] if row.get('kind') == 'resource'
+                 and (row.get('captured') or row.get('status') in (401, 403, 404, 410))}
     end = time.monotonic() + minutes * 60
     def persist():
         nonlocal previous
@@ -102,7 +110,7 @@ def run(runtime, cfg, cache, reader, minutes):
                 report['assets'].append(captured)
                 result['captured'] = True
             except Exception as error:
-                result.update(captured=False, status=getattr(error, 'status', 0), category=type(error).__name__)
+                result.update(captured=False, status=getattr(error, 'status', 0), category=type(error).__name__, source_code=getattr(error, 'code', None))
             report['attempts'].append(result)
             attempted.add(row['identity'])
             if len(report['attempts']) % 10 == 0:
@@ -114,7 +122,8 @@ def run(runtime, cfg, cache, reader, minutes):
         for version in versions:
             if time.monotonic() >= end:
                 break
-            if any(a.get('kind') == 'native' and a.get('file_id') == version['file_id'] and a.get('revision') == version['revision'] for a in report['attempts']):
+            if any(a.get('kind') == 'native' and a.get('file_id') == version['file_id'] and a.get('revision') == version['revision']
+                   and (a.get('captured') or a.get('status') in (401, 403, 404, 410)) for a in report['attempts']):
                 continue
             for table, value in (('files', files[version['file_id']]), ('versions', version)):
                 columns = {r[1] for r in source.db.execute('PRAGMA table_info(' + table + ')')}
@@ -127,7 +136,7 @@ def run(runtime, cfg, cache, reader, minutes):
                 source.acquire(current)
                 result['captured'] = True
             except Exception as error:
-                result.update(captured=False, status=getattr(error, 'status', 0), category=type(error).__name__)
+                result.update(captured=False, status=getattr(error, 'status', 0), category=type(error).__name__, source_code=getattr(error, 'code', None))
             report['attempts'].append(result)
             report['linked'] = {table: [dict(r) for r in source.db.execute('SELECT * FROM ' + table)] for table in ('files', 'versions', 'items', 'gaps')}
             # Resource items are indexed above and must not be mistaken for native files.

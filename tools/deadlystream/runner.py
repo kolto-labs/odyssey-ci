@@ -229,6 +229,9 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.minutes <= 240:
         raise ValueError('minutes must be between 1 and 240')
+    if args.mode == 'authenticated' and not os.environ.get('DEADLYSTREAM_SESSION_COOKIES'):
+        emit('site-session-setting-required', setting='DEADLYSTREAM_SESSION_COOKIES')
+        raise SystemExit(2)
     cfg, cache, reader = setup()
     if args.mode == 'deliver':
         deliver(cfg, cache, reader)
