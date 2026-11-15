@@ -266,7 +266,7 @@ def checkpoint(cache, reader, previous):
     return value
 
 
-def deliver(cfg, cache, reader):
+def deliver(cfg, cache, reader, reverse=False):
     global LAST_COMPLETED_DELIVERY
     jobs = pointer(reader, PREFIX + 'drive-jobs/latest.json')
     if not jobs:
@@ -298,8 +298,11 @@ def deliver(cfg, cache, reader):
         finally:
             job_file.unlink(missing_ok=True)
             result_file.unlink(missing_ok=True)
+    # The independent delivery lane starts at the opposite end of the batch.
+    # Both lanes use the same one-file resumable capability and verify its SHA.
+    jobs_to_run = list(reversed(todo['jobs'])) if reverse else todo['jobs']
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        receipts = list(pool.map(run, todo['jobs']))
+        receipts = list(pool.map(run, jobs_to_run))
     if all(receipt.get('ok') for receipt in receipts):
         LAST_COMPLETED_DELIVERY = jobs['cipher_sha256']
     emit('drive-cloud-delivery', uploaded=sum(bool(x.get('ok')) for x in receipts),
@@ -371,7 +374,7 @@ def main():
     if args.mode == 'deliver':
         end = time.monotonic() + args.minutes * 60
         while time.monotonic() < end:
-            deliver(cfg, cache, reader)
+            deliver(cfg, cache, reader, reverse=True)
             queue = pointer(reader, PREFIX + 'drive-queue-status.json')
             if queue and time.time() - queue['at_unix'] < 120 and queue['remaining'] == 0:
                 public = pointer(reader, PREFIX + 'latest.json') or {}
