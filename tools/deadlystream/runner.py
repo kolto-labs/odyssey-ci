@@ -339,8 +339,12 @@ def main():
             deliver(cfg, cache, reader)
             queue = pointer(reader, PREFIX + 'drive-queue-status.json')
             if queue and time.time() - queue['at_unix'] < 120 and queue['remaining'] == 0:
-                emit('drive-queue-drained-final-audit-required')
-                break
+                public = pointer(reader, PREFIX + 'latest.json') or {}
+                member = pointer(reader, PREFIX + 'authenticated/latest.json') or {}
+                admitted = queue.get('admission') or {}
+                if admitted.get('public_object') == public.get('object') and admitted.get('member_object') == member.get('object'):
+                    emit('drive-queue-drained-final-audit-required')
+                    break
             time.sleep(5)
         return
     previous = restore(cfg, cache, reader)
