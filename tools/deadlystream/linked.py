@@ -21,6 +21,30 @@ cache = module.Catalogue(cfg)
 inventory = json.loads((BASE / 'output/whole-site-inventory.json').read_text())
 known_file = ROOT / 'known-native-ids.json'
 known = set(json.loads(known_file.read_text())) if known_file.exists() else {int(match[1]) for url in inventory['urls'] if (match := re.search(r'/files/file/(\d+)', url))}
+TRANSIENT_CODES = {'source-browser-check-required', 'source-proxy-unavailable', 'source-proxy-required',
+                   'source-connection-failed', 'source-dns-unavailable', 'source-backoff-required',
+                   'source-transfer-incomplete', 'incomplete-source-file',
+                   'ConnectionError', 'ReadTimeout', 'ClientError', 'OperationalError'}
+
+
+def failure(table, row, error):
+    cache.failure(table, row, error)
+    retry = getattr(error, 'code', type(error).__name__) in TRANSIENT_CODES or getattr(error, 'status', 0) in (429, 500, 502, 503, 504)
+    if table == 'versions' and getattr(error, 'code', '') in ('some-download-variants-unavailable', 'previously-listed-download-unavailable'):
+        retry = retry or any(gap[0] in TRANSIENT_CODES or gap[1] in (429, 500, 502, 503, 504)
+                            for gap in cache.db.execute('SELECT category,http_status FROM gaps WHERE file_id=? AND revision=?',
+                                                        (row['file_id'], row['revision'])))
+    if retry:
+        where = 'id=?' if table == 'files' else 'file_id=? AND revision=?'
+        values = (row['id'],) if table == 'files' else (row['file_id'], row['revision'])
+        cache.db.execute("UPDATE " + table + " SET status='pending' WHERE " + where, values)
+        cache.db.commit()
+
+
+for table in ('files', 'versions'):
+    marks = ','.join('?' for _ in TRANSIENT_CODES)
+    cache.db.execute("UPDATE " + table + " SET status='pending' WHERE error IN (" + marks + ")", tuple(TRANSIENT_CODES))
+cache.db.commit()
 while True:
     with sqlite3.connect(ROOT / 'whole-site.sqlite') as discovery:
         updates = discovery.execute("SELECT file_id,url FROM native_updates WHERE state='pending'").fetchall() if discovery.execute("SELECT 1 FROM sqlite_master WHERE name='native_updates'").fetchone() else []
@@ -51,14 +75,14 @@ while True:
         except Exception as error:
             if isinstance(error, module.SourceError) and error.code in ('source-proxy-unavailable', 'source-proxy-required'):
                 break
-            cache.failure('files', row, error)
+            failure('files', row, error)
     for version in cache.db.execute("SELECT * FROM versions WHERE status='pending' ORDER BY history_id='0' DESC").fetchall():
         try:
             cache.acquire(version)
         except Exception as error:
             if isinstance(error, module.SourceError) and error.code in ('source-proxy-unavailable', 'source-proxy-required'):
                 break
-            cache.failure('versions', version, error)
+            failure('versions', version, error)
     print(json.dumps({'event': 'linked-native-pass', 'files': cache.db.execute('SELECT count(*) FROM files').fetchone()[0],
                       'items': cache.db.execute('SELECT count(*) FROM items').fetchone()[0]}), flush=True)
     pass_file = ROOT / 'linked-last-pass.new'

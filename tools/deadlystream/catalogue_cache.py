@@ -450,6 +450,7 @@ class Catalogue:
                     def leaf(control):
                         child=Catalogue({**self.cfg,'parallel_variants':1})
                         child.session.cookies.update(self.session.cookies)
+                        child.session.headers.update(self.session.headers)
                         try:return child.acquire(version,[control],expected_token,hints,False)
                         finally:child.db.close();child.session.close()
                     with ThreadPoolExecutor(max_workers=parallel) as pool:
