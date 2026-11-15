@@ -18,9 +18,26 @@ cfg = json.loads((BASE / 'config.json').read_text())
 cfg['state'] = str(ROOT / 'linked-catalogue')
 cache = module.Catalogue(cfg)
 inventory = json.loads((BASE / 'output/whole-site-inventory.json').read_text())
-known = {int(match[1]) for url in inventory['urls'] if (match := re.search(r'/files/file/(\d+)', url))}
+known_file = ROOT / 'known-native-ids.json'
+known = set(json.loads(known_file.read_text())) if known_file.exists() else {int(match[1]) for url in inventory['urls'] if (match := re.search(r'/files/file/(\d+)', url))}
 while True:
     with sqlite3.connect(ROOT / 'whole-site.sqlite') as discovery:
+        updates = discovery.execute("SELECT file_id,url FROM native_updates WHERE state='pending'").fetchall() if discovery.execute("SELECT 1 FROM sqlite_master WHERE name='native_updates'").fetchone() else []
+        if updates:
+            import gzip
+            baseline = json.loads(gzip.decompress((ROOT / 'native-baseline.json.gz').read_bytes()))
+            affected = {file_id for file_id, url in updates}
+            for table in ('files', 'versions', 'items', 'gaps'):
+                columns = {r[1] for r in cache.db.execute('PRAGMA table_info(' + table + ')')}
+                for row in baseline[table]:
+                    if row['id' if table == 'files' else 'file_id'] not in affected:
+                        continue
+                    fields = [key for key in row if key in columns]
+                    cache.db.execute('INSERT OR IGNORE INTO ' + table + '(' + ','.join(fields) + ') VALUES(' + ','.join('?' for _ in fields) + ')', tuple(row[key] for key in fields))
+            for file_id, url in updates:
+                cache.db.execute("INSERT INTO files(id,url,status) VALUES(?,?,'pending') ON CONFLICT(id) DO UPDATE SET url=excluded.url,status='pending',error=NULL", (file_id, module.canonical(url)))
+            cache.db.commit()
+            discovery.executemany("UPDATE native_updates SET state='admitted' WHERE file_id=?", [(file_id,) for file_id, url in updates])
         for url, in discovery.execute('SELECT url FROM pages'):
             match = re.search(r'/files/file/(\d+)', url)
             if match and int(match[1]) not in known:

@@ -158,6 +158,8 @@ def checkpoint(cache, reader, previous):
             src.row_factory = sqlite3.Row
             linked = {table: [dict(row) for row in src.execute('SELECT * FROM ' + table)]
                       for table in ('files', 'versions', 'items', 'gaps')}
+            counts['native_files'] = dict(src.execute('SELECT status,count(*) FROM files GROUP BY status'))
+            counts['native_versions'] = dict(src.execute('SELECT status,count(*) FROM versions GROUP BY status'))
     index = private_object(cache, 'indexes', gzip.compress(json.dumps({'counts': counts, 'assets': rows, 'linked': linked}).encode(), mtime=0))
     package = BASE / 'checkpoint.tar.gz'
     with tarfile.open(package, 'w:gz') as archive:
@@ -165,6 +167,9 @@ def checkpoint(cache, reader, previous):
         archive.add(BASE / 'output/whole-site-inventory.json', arcname='output/whole-site-inventory.json')
         if linked:
             archive.add(root / 'linked-checkpoint.sqlite', arcname='whole-site/linked-catalogue/catalogue.sqlite')
+        for path in (root / 'native-baseline.json.gz', root / 'known-native-ids.json', root / 'sitemaps'):
+            if path.exists():
+                archive.add(path, arcname='whole-site/' + path.name)
         # Content-addressed pages are included only after their completed capture
         # appears in the consistent SQLite backup. In-flight files are excluded.
         for old_path in page_paths:
@@ -237,6 +242,11 @@ def main():
         deliver(cfg, cache, reader)
         return
     previous = restore(cfg, cache, reader)
+    if args.mode == 'authenticated':
+        for cookie in json.loads((BASE / 'private/site-cookies.json').read_text()):
+            if cookie['domain'] not in ('deadlystream.com', '.deadlystream.com', 'www.deadlystream.com') or cookie['name'] not in ('ips4_member_id', 'ips4_login_key', 'ips4_IPSSessionFront', 'ips4_device_key', 'ips4_loggedIn'):
+                raise ValueError('unexpected site-session scope')
+            cache.session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'], path=cookie['path'], secure=True)
     # Explicit SOCKS for source only. TLS remains verified; never fall back direct.
     response = cache.get('https://deadlystream.com/robots.txt')
     robots = response.content
@@ -244,11 +254,19 @@ def main():
     (BASE / 'state/robots.txt').write_bytes(robots)
     emit('proxied-source-admitted', http_status=200, robots_sha256=hashlib.sha256(robots).hexdigest())
     if args.mode == 'authenticated':
-        module('authenticated').run(sys.modules[__name__], cfg, cache, reader, args.minutes)
+        module('authenticated').run(sys.modules[__name__], cfg, cache, reader, args.minutes, previous)
         return
     if args.mode == 'probe':
         deliver(cfg, cache, reader)
         return
+    try:
+        module('sitemaps').refresh(sys.modules[__name__], cache, reader)
+    except Exception as error:
+        if type(error).__name__ not in ('SourceError', 'ParseError', 'ValueError'):
+            raise
+        emit('official-sitemap-refresh-incomplete', category=type(error).__name__,
+             source_code=getattr(error, 'code', None), http_status=getattr(error, 'status', None),
+             existing_frontier_retained=True)
     child = None
     linked_child = None
     delivery_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)

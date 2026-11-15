@@ -10,7 +10,7 @@ import time
 from bs4 import BeautifulSoup
 
 
-def run(runtime, cfg, cache, reader, minutes):
+def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
     root = runtime.BASE / 'whole-site'
     cookie_file = runtime.BASE / 'private/site-cookies.json'
     if not cookie_file.exists():
@@ -24,7 +24,8 @@ def run(runtime, cfg, cache, reader, minutes):
     if not re.fullmatch(r'[1-9][0-9]*', member):
         raise ValueError('missing member identity')
     own_cfg = {**cfg, 'state': str(root / 'authenticated'), 'source_interval_seconds': 1.0}
-    source = runtime.module('catalogue_cache').Catalogue(own_cfg)
+    catalogue_module = runtime.module('catalogue_cache')
+    source = catalogue_module.Catalogue(own_cfg)
     for cookie in cookies:
         source.session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'],
                                    path=cookie['path'], secure=True)
@@ -59,13 +60,20 @@ def run(runtime, cfg, cache, reader, minutes):
             fields = [key for key in row if key in columns]
             source.db.execute('INSERT OR IGNORE INTO ' + table + '(' + ','.join(fields) + ') VALUES(' + ','.join('?' for _ in fields) + ')', tuple(row[key] for key in fields))
     source.db.commit()
-    attempted = {row['identity'] for row in report['attempts'] if row.get('kind') == 'resource'
-                 and (row.get('captured') or row.get('status') in (401, 403, 404, 410))}
+    def terminal(row):
+        return row.get('captured') or row.get('status') in (401, 403, 404, 410) or row.get('source_code') in (
+            'authenticated-source-returned-page', 'historical-download-unavailable', 'download-unavailable',
+            'source-empty-download', 'source-version-has-no-files', 'empty-download-selection',
+            'previously-listed-download-unavailable', 'some-download-variants-unavailable',
+            'current-release-changed-before-download')
+    attempted = {row['identity'] for row in report['attempts'] if row.get('kind') == 'resource' and terminal(row)}
     end = time.monotonic() + minutes * 60
+    resource_end = time.monotonic() + min(600, minutes * 20)
     def persist():
         nonlocal previous
         report['at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-        report['source_public_checkpoint'] = runtime.pointer(reader, runtime.PREFIX + 'latest.json')
+        report['source_public_checkpoint'] = public_checkpoint
+        report['resource_attempts_terminal'] = sum(a.get('kind') == 'resource' and bool(terminal(a)) for a in report['attempts'])
         plain = gzip.compress(json.dumps(report).encode(), mtime=0)
         value = runtime.private_object(cache, 'authenticated/reports', plain)
         runtime.read_private(reader, value, len(plain) + 1024 * 1024)
@@ -83,7 +91,7 @@ def run(runtime, cfg, cache, reader, minutes):
             AND kind IN ('attachment','legacy-attachment','linked-download','linked-file')
             AND (status IN (401,403) OR error='source-returned-page-instead-of-download')
             ORDER BY CASE WHEN kind='attachment' THEN 0 ELSE 1 END,id"""):
-            if time.monotonic() >= end:
+            if time.monotonic() >= resource_end:
                 break
             if row['identity'] in attempted:
                 continue
@@ -93,7 +101,7 @@ def run(runtime, cfg, cache, reader, minutes):
                 content_type = response.headers.get('Content-Type', '').lower()
                 if ('html' in content_type or 'json' in content_type) and 'attachment' not in response.headers.get('Content-Disposition', '').lower():
                     response.close()
-                    raise ValueError('authenticated endpoint returned a page')
+                    raise catalogue_module.SourceError('authenticated-source-returned-page', response.status_code)
                 file_id = -row['id']
                 revision = 'site-resource-' + hashlib.sha256(row['identity'].encode()).hexdigest()[:24]
                 source.db.execute('INSERT OR IGNORE INTO files(id,url) VALUES(?,?)', (file_id, row['url']))
@@ -123,7 +131,7 @@ def run(runtime, cfg, cache, reader, minutes):
             if time.monotonic() >= end:
                 break
             if any(a.get('kind') == 'native' and a.get('file_id') == version['file_id'] and a.get('revision') == version['revision']
-                   and (a.get('captured') or a.get('status') in (401, 403, 404, 410)) for a in report['attempts']):
+                   and terminal(a) for a in report['attempts']):
                 continue
             for table, value in (('files', files[version['file_id']]), ('versions', version)):
                 columns = {r[1] for r in source.db.execute('PRAGMA table_info(' + table + ')')}
@@ -144,5 +152,12 @@ def run(runtime, cfg, cache, reader, minutes):
                 key = 'id' if table == 'files' else 'file_id'
                 report['linked'][table] = [r for r in report['linked'][table] if r[key] > 0]
             persist()
+        done_resources = {a['identity'] for a in report['attempts'] if a.get('kind') == 'resource' and terminal(a)}
+        candidates = discovery.execute("""SELECT identity FROM assets WHERE state='unavailable'
+            AND kind IN ('attachment','legacy-attachment','linked-download','linked-file')
+            AND (status IN (401,403) OR error='source-returned-page-instead-of-download')""")
+        report['remaining_resources'] = sum(row['identity'] not in done_resources for row in candidates)
+        done_native = {(a['file_id'], a['revision']) for a in report['attempts'] if a.get('kind') == 'native' and terminal(a)}
+        report['remaining_native_versions'] = sum((v['file_id'], v['revision']) not in done_native for v in versions)
     finally:
         persist()
