@@ -157,14 +157,17 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
         return urls
 
     def selector_digest(row):
-        return hashlib.sha256(json.dumps(sorted(published_urls(row))).encode()).hexdigest()
+        urls = sorted(published_urls(row))
+        if (urlsplit(row['url']).hostname or '').removeprefix('www.') in ('dropbox.com', 'mediafire.com'):
+            urls.append('urn:kolto:download-resolution:v1')
+        return hashlib.sha256(json.dumps(urls).encode()).hexdigest()
 
     def acquire_resource(row):
         urls = published_urls(row)
         last_error = None
         for url in urls:
             try:
-                response = source.get(url)
+                response = source.download_response(url)
                 content_type = response.headers.get('Content-Type', '').lower()
                 if (('html' in content_type or 'json' in content_type)
                         and 'attachment' not in response.headers.get('Content-Disposition', '').lower()

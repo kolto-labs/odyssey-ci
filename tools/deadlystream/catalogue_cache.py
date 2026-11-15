@@ -23,7 +23,7 @@ import urllib.robotparser
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
-from urllib.parse import urljoin, urlsplit, parse_qs, urlencode, urlunsplit
+from urllib.parse import urljoin, urlsplit, parse_qs, parse_qsl, urlencode, urlunsplit
 
 import boto3
 from botocore.config import Config
@@ -103,7 +103,7 @@ class Catalogue:
     def s3(self):
         if self._s3 is None:
             c = json.loads(Path(self.cfg['writer_file']).read_text())
-            self._s3 = boto3.client('s3', endpoint_url=self.cfg['endpoint'], region_name='auto',
+            self._s3 = boto3.session.Session().client('s3', endpoint_url=self.cfg['endpoint'], region_name='auto',
                 aws_access_key_id=c['id'], aws_secret_access_key=c['secret_access_key'],
                 config=Config(signature_version='s3v4', retries={'max_attempts': 5},
                     request_checksum_calculation='when_required', response_checksum_validation='when_required'))
@@ -179,6 +179,48 @@ class Catalogue:
                 raise SourceError('source-not-found' if status in (404,410) else 'source-access-denied' if status in (401,403) else 'source-http-error', status)
             return response
         raise SourceError('source-redirect-limit')
+
+    def download_response(self, url):
+        original = url
+        address = urlsplit(url)
+        host = (address.hostname or '').removeprefix('www.')
+        evidence = {}
+        if host == 'dropbox.com' and address.path.startswith(('/s/', '/scl/fi/')):
+            query = [(key, value) for key, value in parse_qsl(address.query, keep_blank_values=True)
+                     if key not in ('dl', 'raw')]
+            query.append(('dl', '1'))
+            url = urlunsplit((address.scheme, address.netloc, address.path, urlencode(query), ''))
+            evidence['provider_download_mode'] = 'dropbox-dl-1'
+        response = self.get(url)
+        if host == 'mediafire.com' and 'html' in response.headers.get('Content-Type', '').lower():
+            body = bytearray()
+            try:
+                for block in response.iter_content(65536):
+                    body.extend(block)
+                    if len(body) > 16 * 1024 * 1024:
+                        raise SourceError('oversized-download-landing-page')
+            finally:
+                response.close()
+            body = bytes(body)
+            if re.search(br'<title[^>]*>\s*(?:one moment, please|just a moment)\.*\s*</title>', body, re.I):
+                raise SourceError('source-browser-check-required', 403)
+            button = BeautifulSoup(body, 'html.parser').select_one('a#downloadButton[href]')
+            target = urljoin(response.url, button['href']) if button else ''
+            resolved = urlsplit(target)
+            if (resolved.scheme == 'https' and resolved.hostname
+                    and re.fullmatch(r'download[0-9]*\.mediafire\.com', resolved.hostname)
+                    and not resolved.username and not resolved.password):
+                evidence['provider_landing'] = self.chunk(body)
+                evidence['provider_landing_url'] = response.url
+                evidence['provider_download_mode'] = 'mediafire-published-download-button'
+                response = self.get(target)
+            else:
+                response._content = body
+                response._content_consumed = True
+        if evidence:
+            response.preservation_resolution = {**evidence, 'published_link': original,
+                                                 'retrieval_url': response.url}
+        return response
 
     def html(self, response):
         data = bytearray()
@@ -332,7 +374,8 @@ class Catalogue:
         return {'key':key,'sha256':sha,'size':len(data),'cipher_sha256':cipher}
 
     def store_file(self, version, response, row_key, selector, filename_hint=None):
-        selector = {**selector, **self.cfg.get('provenance_flags', {})}
+        selector = {**selector, **self.cfg.get('provenance_flags', {}),
+                    **getattr(response, 'preservation_resolution', {})}
         header = response.headers.get('Content-Disposition','')
         filename=download_filename(header) if header else (Path(filename_hint.replace('\\','/')).name[:240] if filename_hint else 'download')
         expected = response.headers.get('Content-Length')

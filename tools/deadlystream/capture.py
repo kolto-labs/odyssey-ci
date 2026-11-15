@@ -156,6 +156,11 @@ for table in ('pages','assets'):
  # Retain their attempt history and backoff while keeping the work retryable.
  marks=','.join('?' for _ in TRANSIENT_CODES)
  c.execute("UPDATE "+table+" SET state='pending' WHERE state='unavailable' AND (status IN (429,500,502,503,504) OR error IN ("+marks+"))",TRANSIENT_CODES)
+if not c.execute("SELECT 1 FROM meta WHERE key='provider-download-resolution:v1'").fetchone():
+ for row in c.execute("SELECT id,url FROM assets WHERE state='unavailable' AND error='source-returned-page-instead-of-download'").fetchall():
+  if (urlsplit(row['url']).hostname or '').removeprefix('www.') in ('dropbox.com','mediafire.com'):
+   c.execute("UPDATE assets SET state='pending',next_attempt=0 WHERE id=?",(row['id'],))
+ c.execute("INSERT INTO meta VALUES('provider-download-resolution:v1',?)",(m.stamp(),))
 # Retain discovered references while excluding verified sharing actions from file retrieval.
 for row in c.execute("SELECT id,url FROM assets WHERE kind='external-linked-file' AND state IN ('pending','unavailable')").fetchall():
  if share_link(row['url']):c.execute("UPDATE assets SET state='non-download-link',error='social-sharing-action' WHERE id=?",(row['id'],))
@@ -177,7 +182,7 @@ def worker(table):
   if r is None:time.sleep(3);continue
   key=r['id'] if table=='assets' else r['url'];where='id=?' if table=='assets' else 'url=?'
   try:
-   response=s.get(r['url']);content_type=response.headers.get('Content-Type','').lower()
+   response=s.get(r['url']) if table=='pages' else s.download_response(r['url']);content_type=response.headers.get('Content-Type','').lower()
    if table=='pages':
     if not any(t in content_type for t in ('html','json','xml','text/')):
      response.close();cx.execute('INSERT OR IGNORE INTO assets(identity,url,kind) VALUES(?,?,?)',(r['url'],r['url'],'legacy-screenshot'));cx.execute('INSERT OR IGNORE INTO refs(identity,page_url,label,source_url) VALUES(?,?,?,?)',(r['url'],r['url'],'legacy-image-endpoint',r['url']));cx.execute("UPDATE pages SET state='download-resource',status=?,at=? WHERE url=?",(response.status_code,m.stamp(),key));cx.commit();continue
