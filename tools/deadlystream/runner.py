@@ -7,7 +7,8 @@ import hashlib
 import importlib.util
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import shutil
 import signal
 import sqlite3
@@ -60,7 +61,7 @@ def setup():
         'writer_file': str(private / 'write.json'), 'reader_file': str(private / 'read.json'),
         'identity': str(identity), 'age': shutil.which('age'), 'state': str(BASE / 'state'),
         'source_proxy': 'socks5h://127.0.0.1:40000', 'source_require_proxy': True,
-        'source_interval_seconds': 0.166667, 'source_rate_state': str(BASE / 'state'),
+        'source_interval_seconds': 0.2, 'source_rate_state': str(BASE / 'state'),
         'source_policy_state': str(BASE / 'state'), 'catalogue_urls': str(BASE / 'file-urls.json'),
     }
     if not cfg['age']:
@@ -99,6 +100,36 @@ def pointer(reader, key):
         return None
 
 
+def extract_checkpoint(archive):
+    exact = {'whole-site/whole-site.sqlite', 'output/whole-site-inventory.json',
+             'whole-site/native-baseline.json.gz', 'whole-site/known-native-ids.json',
+             'whole-site/linked-catalogue/catalogue.sqlite',
+             'whole-site/asset-state/catalogue.sqlite', 'whole-site/asset-state/catalogue.sqlite-wal',
+             'whole-site/asset-state/catalogue.sqlite-shm'}
+    directories = {'whole-site', 'output', 'whole-site/pages', 'whole-site/sitemaps',
+                   'whole-site/asset-state', 'whole-site/linked-catalogue',
+                   'whole-site/linked-catalogue/page-observations',
+                   'whole-site/linked-catalogue/page-observations/bytes',
+                   'whole-site/linked-catalogue/source-pages'}
+    total = 0
+    for entry in archive.getmembers():
+        name = entry.name.rstrip('/')
+        if PurePosixPath(name).is_absolute() or '..' in PurePosixPath(name).parts:
+            raise ValueError('unsafe checkpoint path')
+        if entry.isdir() and name in directories:
+            continue
+        allowed = (name in exact or re.fullmatch(r'whole-site/pages/[0-9a-f]{64}\.html\.gz', name)
+                   or re.fullmatch(r'whole-site/sitemaps/[0-9a-f]{64}\.xml', name)
+                   or re.fullmatch(r'whole-site/linked-catalogue/page-observations/(?:bytes/[0-9a-f]{64}\.html\.gz|[0-9]+-[0-9]+-[0-9a-f]{12}\.json)', name)
+                   or re.fullmatch(r'whole-site/linked-catalogue/source-pages/[A-Za-z0-9_.-]+\.gz', name))
+        if not entry.isfile() or not allowed:
+            raise ValueError('unexpected checkpoint member; code, credentials and links are forbidden')
+        total += entry.size
+        if total > 8 * 1024**3:
+            raise ValueError('checkpoint expansion exceeds workspace budget')
+    archive.extractall(BASE, filter='data')
+
+
 def restore(cfg, cache, reader):
     root = BASE / 'whole-site'
     root.mkdir(exist_ok=True)
@@ -108,7 +139,7 @@ def restore(cfg, cache, reader):
         path = BASE / 'restore.tar.gz'
         path.write_bytes(data)
         with tarfile.open(path, 'r:gz') as archive:
-            archive.extractall(BASE, filter='data')
+            extract_checkpoint(archive)
         path.unlink()
         emit('actions-checkpoint-restored', cipher_sha256=previous['cipher_sha256'])
     else:
@@ -167,6 +198,9 @@ def checkpoint(cache, reader, previous):
         archive.add(BASE / 'output/whole-site-inventory.json', arcname='output/whole-site-inventory.json')
         if linked:
             archive.add(root / 'linked-checkpoint.sqlite', arcname='whole-site/linked-catalogue/catalogue.sqlite')
+        for context in (root / 'linked-catalogue/page-observations', root / 'linked-catalogue/source-pages'):
+            if context.exists():
+                archive.add(context, arcname='whole-site/linked-catalogue/' + context.name)
         for path in (root / 'native-baseline.json.gz', root / 'known-native-ids.json', root / 'sitemaps'):
             if path.exists():
                 archive.add(path, arcname='whole-site/' + path.name)

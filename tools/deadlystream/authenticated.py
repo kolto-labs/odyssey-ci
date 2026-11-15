@@ -32,19 +32,27 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
         source.session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'],
                                    path=cookie['path'], secure=True)
     # A cookie's presence is not authorization. Require the site to acknowledge it.
-    try:
-        response = source.get('https://deadlystream.com/files/file/3193-pazaak-deck-collection/')
-    except Exception as error:
-        runtime.emit('site-session-validation-denied', status=getattr(error, 'status', 0), category=type(error).__name__)
-        raise
-    body = response.content
-    response.close()
-    if re.search(br'<h[1-6][^>]*>\s*(?:Banned|Awaiting Validation)', body, re.I):
-        raise RuntimeError('site account is restricted; authenticated capture stopped')
-    nav = BeautifulSoup(body, 'html.parser').select_one('#elUserNav')
-    if not nav or not any(re.search(r'/profile/' + member + r'[-/]', a.get('href', '')) for a in nav.select('a[href]')):
-        runtime.emit('site-session-not-accepted')
-        raise RuntimeError('site did not acknowledge the provided signed-in session')
+    def validate_session():
+        try:
+            response = source.get('https://deadlystream.com/files/file/3193-pazaak-deck-collection/')
+            body = bytearray()
+            try:
+                for chunk in response.iter_content(65536):
+                    body.extend(chunk)
+                    if len(body) > 16 * 1024 * 1024:
+                        raise ValueError('oversized site-session validation page')
+            finally:
+                response.close()
+        except Exception as error:
+            runtime.emit('site-session-validation-denied', status=getattr(error, 'status', 0), category=type(error).__name__)
+            raise
+        if re.search(br'<h[1-6][^>]*>\s*(?:Banned|Awaiting Validation)', body, re.I):
+            raise RuntimeError('site account is restricted; authenticated capture stopped')
+        nav = BeautifulSoup(bytes(body), 'html.parser').select_one('#elUserNav')
+        if not nav or not any(re.search(r'/profile/' + member + r'[-/]', a.get('href', '')) for a in nav.select('a[href]')):
+            runtime.emit('site-session-not-accepted')
+            raise RuntimeError('site did not acknowledge the provided signed-in session')
+    validate_session()
     runtime.emit('site-session-admitted', scope='public-linked downloads only; no private forum crawl')
     original_store = source.store_file
     def store(version, response, row_key, selector, filename_hint=None):
@@ -56,6 +64,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
     report_path = root / 'authenticated-report.json'
     previous = runtime.pointer(reader, 'whole-site/actions/authenticated/latest.json')
     report = json.loads(gzip.decompress(runtime.read_private(reader, previous, 64 * 1024 * 1024))) if previous else {'assets': [], 'linked': {'files': [], 'versions': [], 'items': [], 'gaps': []}, 'attempts': []}
+    report['session_revalidation_failed'] = False
     for table, rows in report['linked'].items():
         columns = {r[1] for r in source.db.execute('PRAGMA table_info(' + table + ')')}
         for row in rows:
@@ -71,8 +80,23 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
     attempted = {row['identity'] for row in report['attempts'] if row.get('kind') == 'resource' and terminal(row)}
     end = time.monotonic() + minutes * 60
     resource_end = time.monotonic() + min(600, minutes * 20)
+    next_validation = time.monotonic() + 300
+    def revalidate():
+        nonlocal next_validation
+        if time.monotonic() < next_validation:
+            return
+        try:
+            validate_session()
+        except Exception:
+            report['session_revalidation_failed'] = True
+            raise
+        next_validation = time.monotonic() + 300
     def persist():
         nonlocal previous
+        report['linked'] = {}
+        for table in ('files', 'versions', 'items', 'gaps'):
+            key = 'id' if table == 'files' else 'file_id'
+            report['linked'][table] = [dict(row) for row in source.db.execute('SELECT * FROM ' + table + ' WHERE ' + key + '>0')]
         report['at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
         report['source_public_checkpoint'] = public_checkpoint
         report['resource_attempts_terminal'] = sum(a.get('kind') == 'resource' and bool(terminal(a)) for a in report['attempts'])
@@ -97,6 +121,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                 break
             if row['identity'] in attempted:
                 continue
+            revalidate()
             result = {'kind': 'resource', 'identity': row['identity'], 'source_status': row['status']}
             try:
                 response = source.get(row['url'])
@@ -130,14 +155,51 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                 persist()
         # Native recovery preserves exact historic version controls and all variants.
         _, native = reader.snapshot()
-        versions = [v for v in native['versions'] if v['status'] not in ('cached', 'superseded')]
         files = {f['id']: f for f in native['files']}
+        all_versions = {(v['file_id'], v['revision']): v for v in native['versions']}
+        linked = {}
+        if public_checkpoint and public_checkpoint.get('index'):
+            linked = json.loads(gzip.decompress(runtime.read_private(reader, public_checkpoint['index'], 64 * 1024 * 1024))).get('linked') or {}
+        files.update({f['id']: f for f in linked.get('files', [])})
+        all_versions.update({(v['file_id'], v['revision']): v for v in linked.get('versions', [])})
+        linked_version_ids = {v['file_id'] for v in linked.get('versions', [])}
+        scan_targets = [f for f in linked.get('files', []) if f['status'] == 'failed' or f['id'] not in linked_version_ids]
+        for file in scan_targets:
+            if time.monotonic() >= end:
+                break
+            if any(a.get('kind') == 'native-scan' and a.get('file_id') == file['id'] and terminal(a) for a in report['attempts']):
+                continue
+            revalidate()
+            # Reuse cached selectors before rescanning an existing native record.
+            for table in ('files', 'versions', 'items', 'gaps'):
+                columns = {r[1] for r in source.db.execute('PRAGMA table_info(' + table + ')')}
+                for value in native[table]:
+                    if value['id' if table == 'files' else 'file_id'] != file['id']:
+                        continue
+                    fields = [key for key in value if key in columns]
+                    source.db.execute('INSERT OR IGNORE INTO ' + table + '(' + ','.join(fields) + ') VALUES(' + ','.join('?' for _ in fields) + ')', tuple(value[key] for key in fields))
+            source.db.execute('INSERT OR IGNORE INTO files(id,url) VALUES(?,?)', (file['id'], file['url']))
+            source.db.commit()
+            row = source.db.execute('SELECT * FROM files WHERE id=?', (file['id'],)).fetchone()
+            result = {'kind': 'native-scan', 'file_id': file['id']}
+            try:
+                source.scan(row)
+                files[file['id']] = dict(source.db.execute('SELECT * FROM files WHERE id=?', (file['id'],)).fetchone())
+                result['captured'] = True
+            except Exception as error:
+                source.failure('files', row, error)
+                result.update(captured=False, status=getattr(error, 'status', 0), category=type(error).__name__, source_code=getattr(error, 'code', None))
+            report['attempts'].append(result)
+            persist()
+        all_versions.update({(v['file_id'], v['revision']): dict(v) for v in source.db.execute('SELECT * FROM versions WHERE file_id>0')})
+        versions = [v for v in all_versions.values() if v['status'] not in ('cached', 'superseded')]
         for version in versions:
             if time.monotonic() >= end:
                 break
             if any(a.get('kind') == 'native' and a.get('file_id') == version['file_id'] and a.get('revision') == version['revision']
                    and terminal(a) for a in report['attempts']):
                 continue
+            revalidate()
             for table, value in (('files', files[version['file_id']]), ('versions', version)):
                 columns = {r[1] for r in source.db.execute('PRAGMA table_info(' + table + ')')}
                 fields = [k for k in value if k in columns]
@@ -151,11 +213,6 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             except Exception as error:
                 result.update(captured=False, status=getattr(error, 'status', 0), category=type(error).__name__, source_code=getattr(error, 'code', None))
             report['attempts'].append(result)
-            report['linked'] = {table: [dict(r) for r in source.db.execute('SELECT * FROM ' + table)] for table in ('files', 'versions', 'items', 'gaps')}
-            # Resource items are indexed above and must not be mistaken for native files.
-            for table in ('files', 'versions', 'items', 'gaps'):
-                key = 'id' if table == 'files' else 'file_id'
-                report['linked'][table] = [r for r in report['linked'][table] if r[key] > 0]
             persist()
         done_resources = {a['identity'] for a in report['attempts'] if a.get('kind') == 'resource' and terminal(a)}
         candidates = discovery.execute("""SELECT identity FROM assets WHERE state='unavailable'
@@ -164,5 +221,8 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
         report['remaining_resources'] = sum(row['identity'] not in done_resources for row in candidates)
         done_native = {(a['file_id'], a['revision']) for a in report['attempts'] if a.get('kind') == 'native' and terminal(a)}
         report['remaining_native_versions'] = sum((v['file_id'], v['revision']) not in done_native for v in versions)
+        done_scans = {a['file_id'] for a in report['attempts'] if a.get('kind') == 'native-scan' and terminal(a)}
+        report['remaining_native_files'] = sum(f['id'] not in done_scans for f in scan_targets)
+        report['access_review_required'] = sum(a.get('source_code') == 'source-login-challenge-or-unavailable' for a in report['attempts'])
     finally:
         persist()
