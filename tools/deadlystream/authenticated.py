@@ -202,8 +202,9 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                 if error.status not in (401, 403, 404, 410) and error.code not in ('authenticated-source-returned-page', 'source-empty-download'):
                     raise
         raise last_error
+    last_persist = 0.0
     def persist():
-        nonlocal previous
+        nonlocal previous, last_persist
         report['linked'] = {}
         for table in ('files', 'versions', 'items', 'gaps'):
             key = 'id' if table == 'files' else 'file_id'
@@ -222,6 +223,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
         cache.put('whole-site/actions/authenticated/latest.json', json.dumps(value).encode())
         previous = value
         report_path.write_text(json.dumps(report))
+        last_persist = time.monotonic()
         runtime.emit('authenticated-progress', attempts=len(report['attempts']),
                      captured_resources=len(report['assets']), captured_native_items=len(report['linked']['items']))
     try:
@@ -244,7 +246,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                 result.update(captured=False, status=getattr(error, 'status', 0), category=type(error).__name__, source_code=getattr(error, 'code', None))
             report['attempts'].append(result)
             attempted[row['identity']] = result
-            if len(report['attempts']) % 10 == 0:
+            if len(report['attempts']) % 10 == 0 or time.monotonic() - last_persist >= 60:
                 persist()
         # Native recovery preserves exact historic version controls and all variants.
         _, native = reader.snapshot()
