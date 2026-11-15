@@ -32,6 +32,37 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
     for cookie in cookies:
         source.session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'],
                                    path=cookie['path'], secure=True)
+    browser_session_attempted = False
+    def normal_browser_session():
+        nonlocal browser_session_attempted
+        if browser_session_attempted:
+            return False
+        browser_session_attempted = True
+        from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
+        source.pace()
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(proxy={'server': 'socks5://127.0.0.1:40000'})
+            context = browser.new_context(user_agent=source.session.headers['User-Agent'])
+            context.add_cookies([{**cookie, 'httpOnly': True} for cookie in cookies])
+            page = context.new_page()
+            try:
+                try:
+                    page.goto('https://deadlystream.com/files/file/3193-pazaak-deck-collection/',
+                              wait_until='domcontentloaded', timeout=45000)
+                    page.wait_for_selector('#elUserNav a[href*="/profile/' + member + '-"]', timeout=45000)
+                except BrowserTimeout:
+                    pass
+                accepted = page.locator('#elUserNav a[href*="/profile/' + member + '-"]').count() > 0
+                runtime.emit('standard-browser-session-validation', accepted=accepted,
+                             page_title=page.title()[:100], manual_interaction_performed=False)
+                if accepted:
+                    for cookie in context.cookies('https://deadlystream.com/'):
+                        if cookie['domain'] in ('deadlystream.com', '.deadlystream.com', 'www.deadlystream.com'):
+                            source.session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'],
+                                                       path=cookie['path'], secure=cookie['secure'])
+                return accepted
+            finally:
+                browser.close()
     # A cookie's presence is not authorization. Require the site to acknowledge it.
     def validate_session():
         try:
@@ -53,9 +84,12 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
         if not nav or not any(re.search(r'/profile/' + member + r'[-/]', a.get('href', '')) for a in nav.select('a[href]')):
             soup = BeautifulSoup(bytes(body), 'html.parser')
             text = soup.get_text(' ', strip=True).lower()
-            challenge = any(marker in bytes(body).lower() for marker in (b'cf-chl-', b'challenge-platform', b'cf-turnstile', b'just a moment'))
+            challenge = any(marker in bytes(body).lower() for marker in (b'cf-chl-', b'challenge-platform', b'cf-turnstile', b'just a moment', b'one moment, please'))
             restriction = any(marker in text for marker in ('you are banned', 'awaiting validation', 'you do not have permission', 'your account has been suspended'))
             title = soup.title.get_text(' ', strip=True)[:100] if soup.title else ''
+            if challenge and not restriction and normal_browser_session():
+                validate_session()
+                return
             runtime.emit('site-session-not-accepted', user_navigation_present=bool(nav),
                          login_link_present=bool(soup.select('a[href*="/login/"]')),
                          member_profile_visible=bool(soup.find('a', href=re.compile(r'/profile/' + member + r'[-/]'))),

@@ -26,6 +26,10 @@ jobs:
         run: python -m pip install boto3==1.43.124 requests==2.34.2 beautifulsoup4==4.15.0 PySocks==1.7.1
       - name: Establish verified cloud-side source proxy
         run: bash tools/deadlystream/install-warp.sh
+      - name: Install the standard browser for site session validation
+        run: |
+          python -m pip install playwright==1.65.2
+          python -m playwright install --with-deps chromium
       - name: Download directly to encrypted cloud storage and scoped Drive uploads
         env:
           DEADLYSTREAM_WORK_ROOT: ${{ runner.temp }}/deadlystream-preservation
