@@ -30,8 +30,10 @@ def requeue_changed_pages(connection, url, modified, previous):
         return 0
     # The first refresh compares against every retained page capture. Later
     # refreshes compare the last committed official modification timestamp.
-    before = timestamp(previous) if previous is not None else min(timestamp(row[1]) or 0 for row in rows)
-    if before is None or current <= before:
+    before = timestamp(previous)
+    if before is None:
+        before = min(timestamp(row[1]) or 0 for row in rows)
+    if current <= before:
         return 0
     connection.executemany("UPDATE pages SET state='pending',next_attempt=0 WHERE url=? AND state<>'fetching'",
                            [(row[0],) for row in rows])
