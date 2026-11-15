@@ -42,7 +42,8 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
         source.pace()
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(proxy={'server': 'socks5://127.0.0.1:40000'})
-            context = browser.new_context(user_agent=source.session.headers['User-Agent'])
+            # Use Chromium's ordinary, internally consistent browser headers.
+            context = browser.new_context()
             context.add_cookies([{**cookie, 'httpOnly': True} for cookie in cookies])
             page = context.new_page()
             try:
@@ -56,6 +57,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                 runtime.emit('standard-browser-session-validation', accepted=accepted,
                              page_title=page.title()[:100], manual_interaction_performed=False)
                 if accepted:
+                    source.session.headers['User-Agent'] = page.evaluate('navigator.userAgent')
                     for cookie in context.cookies('https://deadlystream.com/'):
                         if cookie['domain'] in ('deadlystream.com', '.deadlystream.com', 'www.deadlystream.com'):
                             source.session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'],
