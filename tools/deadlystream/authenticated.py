@@ -130,7 +130,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             'source-empty-download', 'source-version-has-no-files', 'empty-download-selection',
             'previously-listed-download-unavailable',
             'current-release-changed-before-download')
-    attempted = {row['identity'] for row in report['attempts'] if row.get('kind') == 'resource' and terminal(row)}
+    attempted = {row['identity']: row for row in report['attempts'] if row.get('kind') == 'resource' and terminal(row)}
     end = time.monotonic() + minutes * 60
     resource_end = time.monotonic() + min(600, minutes * 20)
     next_validation = time.monotonic() + 300
@@ -145,12 +145,19 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             raise
         next_validation = time.monotonic() + 300
 
-    def acquire_resource(row):
+    def published_urls(row):
         urls = [row['url']]
         if row['kind'] == 'attachment':
             urls.extend(value[0] for value in discovery.execute(
                 'SELECT DISTINCT url FROM attachment_links WHERE identity=? ORDER BY url', (row['identity'],))
                 if value[0] != row['url'])
+        return urls
+
+    def selector_digest(row):
+        return hashlib.sha256(json.dumps(sorted(published_urls(row))).encode()).hexdigest()
+
+    def acquire_resource(row):
+        urls = published_urls(row)
         last_error = None
         for url in urls:
             try:
@@ -211,18 +218,20 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             ORDER BY CASE WHEN kind='attachment' THEN 0 ELSE 1 END,id"""):
             if time.monotonic() >= resource_end:
                 break
-            if row['identity'] in attempted:
+            previous_attempt = attempted.get(row['identity'])
+            selection_sha256 = selector_digest(row)
+            if previous_attempt and (previous_attempt.get('captured') or previous_attempt.get('published_selectors_sha256') == selection_sha256):
                 continue
             revalidate()
             result = {'kind': 'resource', 'identity': row['identity'], 'source_status': row['status'],
-                      'published_alternatives_checked': True}
+                      'published_alternatives_checked': True, 'published_selectors_sha256': selection_sha256}
             try:
                 report['assets'].append(acquire_resource(row))
                 result['captured'] = True
             except Exception as error:
                 result.update(captured=False, status=getattr(error, 'status', 0), category=type(error).__name__, source_code=getattr(error, 'code', None))
             report['attempts'].append(result)
-            attempted.add(row['identity'])
+            attempted[row['identity']] = result
             if len(report['attempts']) % 10 == 0:
                 persist()
         # Native recovery preserves exact historic version controls and all variants.
@@ -287,11 +296,12 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                 result['gap_categories'] = [row[0] for row in source.db.execute('SELECT category FROM gaps WHERE file_id=? AND revision=?', (version['file_id'], version['revision']))]
             report['attempts'].append(result)
             persist()
-        done_resources = {a['identity'] for a in report['attempts'] if a.get('kind') == 'resource' and terminal(a)}
-        candidates = discovery.execute("""SELECT identity FROM assets WHERE state='unavailable'
+        done_resources = {a['identity']: a for a in report['attempts'] if a.get('kind') == 'resource' and terminal(a)}
+        candidates = discovery.execute("""SELECT * FROM assets WHERE state='unavailable'
             AND kind IN ('attachment','legacy-attachment','linked-download','linked-file')
             AND (status IN (401,403) OR error='source-returned-page-instead-of-download')""")
-        report['remaining_resources'] = sum(row['identity'] not in done_resources for row in candidates)
+        report['remaining_resources'] = sum(not (done_resources.get(row['identity'], {}).get('captured') or
+            done_resources.get(row['identity'], {}).get('published_selectors_sha256') == selector_digest(row)) for row in candidates)
         done_native = {(a['file_id'], a['revision']) for a in report['attempts'] if a.get('kind') == 'native' and terminal(a)}
         report['remaining_native_versions'] = sum((v['file_id'], v['revision']) not in done_native for v in versions)
         done_scans = {a['file_id'] for a in report['attempts'] if a.get('kind') == 'native-scan' and terminal(a)}
