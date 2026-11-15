@@ -117,12 +117,18 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             source.db.execute('INSERT OR IGNORE INTO ' + table + '(' + ','.join(fields) + ') VALUES(' + ','.join('?' for _ in fields) + ')', tuple(row[key] for key in fields))
     source.db.commit()
     def terminal(row):
+        if row.get('source_code') == 'source-browser-check-required':
+            return False
+        if row.get('source_code') == 'some-download-variants-unavailable':
+            gaps = row.get('gap_categories') or []
+            return bool(gaps) and all(code in ('source-not-found', 'source-access-denied', 'source-empty-download',
+                'historical-download-unavailable', 'download-unavailable', 'source-version-has-no-files') for code in gaps)
         if row.get('kind') == 'resource' and row.get('status') in (401, 403, 404, 410) and row.get('published_alternatives_checked') is not True:
             return False
         return row.get('captured') or row.get('status') in (401, 403, 404, 410) or row.get('source_code') in (
             'authenticated-source-returned-page', 'historical-download-unavailable', 'download-unavailable',
             'source-empty-download', 'source-version-has-no-files', 'empty-download-selection',
-            'previously-listed-download-unavailable', 'some-download-variants-unavailable',
+            'previously-listed-download-unavailable',
             'current-release-changed-before-download')
     attempted = {row['identity'] for row in report['attempts'] if row.get('kind') == 'resource' and terminal(row)}
     end = time.monotonic() + minutes * 60
@@ -278,6 +284,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                 result['captured'] = True
             except Exception as error:
                 result.update(captured=False, status=getattr(error, 'status', 0), category=type(error).__name__, source_code=getattr(error, 'code', None))
+                result['gap_categories'] = [row[0] for row in source.db.execute('SELECT category FROM gaps WHERE file_id=? AND revision=?', (version['file_id'], version['revision']))]
             report['attempts'].append(result)
             persist()
         done_resources = {a['identity'] for a in report['attempts'] if a.get('kind') == 'resource' and terminal(a)}

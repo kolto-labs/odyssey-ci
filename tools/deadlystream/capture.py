@@ -87,6 +87,7 @@ class Links(HTMLParser):
  handle_startendtag=handle_starttag
 
 def parse(body,url):
+ if re.search(br'<title[^>]*>\s*(?:one moment, please|just a moment)\.*\s*</title>',body,re.I):raise m.SourceError('source-browser-check-required',403)
  text=body.decode('utf-8','replace').replace('\\/','/')
  parser=Links(url);parser.feed(text)
  for v in re.findall(r"(?:https?://(?:www\.)?deadlystream\.com)?/uploads/[^\s<>\"'\\)]+",text):queue(v,url,'embedded-upload')
@@ -168,8 +169,8 @@ def worker(table):
      alternative=cx.execute('SELECT url FROM attachment_links WHERE identity=? AND tried_at IS NULL AND url<>? ORDER BY url LIMIT 1',(r['identity'],r['url'])).fetchone()
      if alternative:
       cx.execute("UPDATE assets SET state='pending',url=?,error=?,status=?,next_attempt=0,at=? WHERE id=?",(alternative['url'],code,status,m.stamp(),key));cx.commit();print(json.dumps({'event':'published-attachment-alternative','id':key}),flush=True);continue
-   transient=status in (429,500,502,503,504) or code in ('source-proxy-unavailable','source-proxy-required','source-connection-failed','source-dns-unavailable','source-backoff-required','ConnectionError','ReadTimeout','ClientError','OperationalError')
-   state='pending' if (transient and r['attempts']<5) or code in ('source-proxy-unavailable','source-proxy-required') else 'unavailable'
+   transient=status in (429,500,502,503,504) or code in ('source-browser-check-required','source-proxy-unavailable','source-proxy-required','source-connection-failed','source-dns-unavailable','source-backoff-required','ConnectionError','ReadTimeout','ClientError','OperationalError')
+   state='pending' if (transient and r['attempts']<5) or code in ('source-browser-check-required','source-proxy-unavailable','source-proxy-required') else 'unavailable'
    cx.execute(f"UPDATE {table} SET state=?,error=?,status=?,at=?,next_attempt=? WHERE {where}",(state,code,status,m.stamp(),time.time()+60*2**min(r['attempts'],5) if transient else 0,key));cx.commit()
    print(json.dumps({'event':'resource-gap','table':table,'id':key if table=='assets' else hashlib.sha256(key.encode()).hexdigest()[:16],'reason':code,'status':status}),flush=True)
 

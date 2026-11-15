@@ -188,6 +188,9 @@ class Catalogue:
                 if len(data) > 16 * 1024 * 1024: raise SourceError('source-page-too-large')
         finally: response.close()
         soup=BeautifulSoup(bytes(data),'html.parser')
+        title = soup.title.get_text(' ', strip=True).lower() if soup.title else ''
+        if title in ('one moment, please...', 'just a moment...', 'one moment, please', 'just a moment'):
+            raise SourceError('source-browser-check-required', 403)
         parsed=urlsplit(response.url);query=parse_qs(parsed.query);match=re.search(r'/files/file/(\d+)',parsed.path)
         if match and parsed.hostname in ('deadlystream.com','www.deadlystream.com') and set(query)<= {'changelog'}:
             history=query.get('changelog',['0'])[0]
