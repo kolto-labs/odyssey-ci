@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""Bounded cloud-only preservation, encrypted checkpoints and scoped Drive jobs."""
+import argparse
+import concurrent.futures
+import gzip
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import sqlite3
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+
+HERE = Path(__file__).resolve().parent
+BASE = Path(os.environ.get('DEADLYSTREAM_WORK_ROOT', '/tmp/deadlystream-preservation'))
+PREFIX = 'whole-site/actions/'
+
+
+def module(name):
+    spec = importlib.util.spec_from_file_location(name, HERE / (name + '.py'))
+    value = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(value)
+    return value
+
+
+def emit(event, **values):
+    print(json.dumps({'event': event, **values}), flush=True)
+
+
+def setup():
+    os.umask(0o077)
+    BASE.mkdir(parents=True, exist_ok=True)
+    private = BASE / 'private'
+    private.mkdir(exist_ok=True)
+    required = ['WRITE_ACCESS_KEY_ID', 'WRITE_SECRET_ACCESS_KEY', 'READ_ACCESS_KEY_ID',
+                'READ_SECRET_ACCESS_KEY', 'DECRYPTION_IDENTITY']
+    missing = [name for name in required if not os.environ.get('DEADLYSTREAM_CACHE_' + name)]
+    if missing:
+        raise RuntimeError('Missing catalogue settings: ' + ', '.join('DEADLYSTREAM_CACHE_' + x for x in missing))
+    for kind in ('write', 'read'):
+        (private / (kind + '.json')).write_text(json.dumps({
+            'id': os.environ.pop('DEADLYSTREAM_CACHE_' + kind.upper() + '_ACCESS_KEY_ID'),
+            'secret_access_key': os.environ.pop('DEADLYSTREAM_CACHE_' + kind.upper() + '_SECRET_ACCESS_KEY')}))
+    identity = private / 'catalogue.agekey'
+    identity.write_text(os.environ.pop('DEADLYSTREAM_CACHE_DECRYPTION_IDENTITY'))
+    cfg = {
+        'bucket': os.environ.get('DEADLYSTREAM_CACHE_BUCKET') or 'kolto-deadlystream-cache',
+        'endpoint': os.environ.get('DEADLYSTREAM_CACHE_ENDPOINT') or 'https://e4eb3dbeb12beaacc177041231790454.r2.cloudflarestorage.com',
+        'recipient': os.environ.get('DEADLYSTREAM_CACHE_ENCRYPTION_RECIPIENT') or 'age1gsph5wg3w4lsfwanyl4gqgp78200ewt9w4p08djzxjxrxwzr9pnqdt7t4x',
+        'writer_file': str(private / 'write.json'), 'reader_file': str(private / 'read.json'),
+        'identity': str(identity), 'age': shutil.which('age'), 'state': str(BASE / 'state'),
+        'source_proxy': 'socks5h://127.0.0.1:40000', 'source_require_proxy': True,
+        'source_interval_seconds': 0.333334, 'source_rate_state': str(BASE / 'state'),
+        'source_policy_state': str(BASE / 'state'), 'catalogue_urls': str(BASE / 'file-urls.json'),
+    }
+    if not cfg['age']:
+        raise RuntimeError('age is unavailable')
+    (BASE / 'config.json').write_text(json.dumps(cfg))
+    for name in ('catalogue_cache.py', 'catalogue_read.py'):
+        shutil.copyfile(HERE / name, BASE / name)
+    cache = module('catalogue_cache').Catalogue(cfg)
+    reader = module('catalogue_read').Reader(cfg, str(identity))
+    emit('catalogue-credentials-admitted', scopes='catalogue-only; repo or organization secrets')
+    return cfg, cache, reader
+
+
+def private_object(cache, key, data):
+    encrypted = cache.encrypt(data)
+    digest = hashlib.sha256(encrypted).hexdigest()
+    address = PREFIX + key + '/' + digest + '.age'
+    cache.put(address, encrypted, immutable=True)
+    return {'object': address, 'cipher_sha256': digest, 'plaintext_sha256': hashlib.sha256(data).hexdigest()}
+
+
+def read_private(reader, pointer, limit):
+    data = reader.encrypted(pointer['object'], pointer['cipher_sha256'], limit)
+    if hashlib.sha256(data).hexdigest() != pointer['plaintext_sha256']:
+        raise ValueError('checkpoint plaintext checksum mismatch')
+    return data
+
+
+def pointer(reader, key):
+    from botocore.exceptions import ClientError
+    try:
+        return json.loads(reader.get(key, 65536))
+    except ClientError as error:
+        if error.response['ResponseMetadata']['HTTPStatusCode'] != 404:
+            raise
+        return None
+
+
+def restore(cfg, cache, reader):
+    root = BASE / 'whole-site'
+    root.mkdir(exist_ok=True)
+    previous = pointer(reader, PREFIX + 'latest.json')
+    if previous:
+        data = read_private(reader, previous, 1024 * 1024 * 1024)
+        path = BASE / 'restore.tar.gz'
+        path.write_bytes(data)
+        with tarfile.open(path, 'r:gz') as archive:
+            archive.extractall(BASE, filter='data')
+        path.unlink()
+        emit('actions-checkpoint-restored', cipher_sha256=previous['cipher_sha256'])
+    else:
+        initial = pointer(reader, 'whole-site/discovery/latest.json')
+        if not initial:
+            raise RuntimeError('Missing original discovery checkpoint; refusing an empty crawl')
+        plain = read_private(reader, initial, 1024 * 1024 * 1024)
+        (root / 'whole-site.sqlite').write_bytes(gzip.decompress(plain))
+        seed = pointer(reader, PREFIX + 'bootstrap.json')
+        if not seed:
+            raise RuntimeError('Missing encrypted sitemap inventory')
+        inventory = read_private(reader, seed, 16 * 1024 * 1024)
+        (BASE / 'output').mkdir(exist_ok=True)
+        (BASE / 'output/whole-site-inventory.json').write_bytes(inventory)
+        emit('original-discovery-restored', cipher_sha256=initial['cipher_sha256'])
+    connection = sqlite3.connect(root / 'whole-site.sqlite')
+    if connection.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+        raise ValueError('recovered discovery database failed integrity check')
+    connection.close()
+    return previous
+
+
+def checkpoint(cache, reader, previous):
+    root = BASE / 'whole-site'
+    if not (root / 'whole-site.sqlite').exists():
+        return previous
+    # No source payloads or account credentials are included in the metadata index.
+    original = sqlite3.connect(root / 'whole-site.sqlite')
+    target = sqlite3.connect(root / 'checkpoint.sqlite')
+    original.backup(target)
+    target.execute('PRAGMA journal_mode=DELETE')
+    target.close()
+    original.row_factory = sqlite3.Row
+    counts = {name: dict(original.execute('SELECT state,count(*) FROM ' + name + ' GROUP BY state'))
+              for name in ('pages', 'assets')}
+    rows = [dict(row) for row in original.execute("SELECT * FROM assets WHERE state='captured'")]
+    original.close()
+    index = private_object(cache, 'indexes', gzip.compress(json.dumps({'counts': counts, 'assets': rows}).encode(), mtime=0))
+    package = BASE / 'checkpoint.tar.gz'
+    with tarfile.open(package, 'w:gz') as archive:
+        archive.add(root / 'checkpoint.sqlite', arcname='whole-site/whole-site.sqlite')
+        archive.add(BASE / 'output/whole-site-inventory.json', arcname='output/whole-site-inventory.json')
+        for directory in (root / 'pages', root / 'asset-state'):
+            if directory.exists():
+                # Collector is stopped; SQLite WAL is checkpointed before packaging.
+                for db in directory.glob('*.sqlite'):
+                    with sqlite3.connect(db) as conn:
+                        conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                archive.add(directory, arcname='whole-site/' + directory.name)
+    value = private_object(cache, 'checkpoints', package.read_bytes())
+    recovered = read_private(reader, value, package.stat().st_size + 1024 * 1024)
+    if hashlib.sha256(recovered).hexdigest() != hashlib.sha256(package.read_bytes()).hexdigest():
+        raise ValueError('checkpoint independent readback mismatch')
+    # A single workflow concurrency group owns this pointer. Refuse a stale writer.
+    current = pointer(reader, PREFIX + 'latest.json')
+    if current != previous:
+        raise RuntimeError('Checkpoint owner changed; immutable snapshot retained without overwriting pointer')
+    value.update(index=index, counts=counts, run_id=os.environ.get('GITHUB_RUN_ID'),
+                 source_commit=os.environ.get('GITHUB_SHA'), at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+    cache.put(PREFIX + 'latest.json', json.dumps(value).encode())
+    emit('encrypted-checkpoint-verified', counts=counts, run_id=value['run_id'])
+    package.unlink()
+    return value
+
+
+def deliver(cfg, cache, reader):
+    jobs = pointer(reader, PREFIX + 'drive-jobs/latest.json')
+    if not jobs:
+        emit('drive-queue-empty')
+        return
+    todo = json.loads(read_private(reader, jobs, 16 * 1024 * 1024))
+    receipts = []
+    mirror = module('mirror')
+    def run(job):
+        job = dict(job)
+        sha = job['sha256']
+        old = pointer(reader, PREFIX + 'drive-receipts/' + sha + '.json')
+        if old and old.get('ok'):
+            return old
+        job.update(reader_module=str(BASE / 'catalogue_read.py'), cache_config=str(BASE / 'config.json'),
+                   catalogue_identity_file=cfg['identity'])
+        job_file = BASE / 'private' / (sha + '.json')
+        result_file = BASE / 'private' / (sha + '-result.json')
+        job_file.write_text(json.dumps(job))
+        try:
+            result = mirror.execute(job_file, result_file)
+            result['github_run_id'] = os.environ.get('GITHUB_RUN_ID')
+            cache.put(PREFIX + 'drive-receipts/' + sha + '.json', json.dumps(result).encode())
+            return result
+        except Exception as error:
+            return {'ok': False, 'sha256': sha, 'category': type(error).__name__}
+        finally:
+            job_file.unlink(missing_ok=True)
+            result_file.unlink(missing_ok=True)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        receipts = list(pool.map(run, todo['jobs']))
+    emit('drive-cloud-delivery', uploaded=sum(bool(x.get('ok')) for x in receipts),
+         failed=sum(not x.get('ok') for x in receipts), bytes=sum(x.get('size', 0) for x in receipts if x.get('ok')))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--minutes', type=int, default=25)
+    parser.add_argument('--mode', choices=('capture', 'deliver', 'both', 'probe'), default='both')
+    args = parser.parse_args()
+    if not 1 <= args.minutes <= 240:
+        raise ValueError('minutes must be between 1 and 240')
+    cfg, cache, reader = setup()
+    if args.mode == 'deliver':
+        deliver(cfg, cache, reader)
+        return
+    previous = restore(cfg, cache, reader)
+    # Explicit SOCKS for source only. TLS remains verified; never fall back direct.
+    response = cache.get('https://deadlystream.com/robots.txt')
+    robots = response.content
+    response.close()
+    (BASE / 'state/robots.txt').write_bytes(robots)
+    emit('proxied-source-admitted', http_status=200, robots_sha256=hashlib.sha256(robots).hexdigest())
+    if args.mode == 'probe':
+        deliver(cfg, cache, reader)
+        return
+    child = None
+    stopping = False
+    def stop(signum, frame):
+        nonlocal stopping
+        stopping = True
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    failure = None
+    try:
+        child = subprocess.Popen([sys.executable, str(HERE / 'capture.py')], env=os.environ.copy())
+        end = time.monotonic() + args.minutes * 60
+        next_delivery = 0
+        while time.monotonic() < end and not stopping:
+            if child.poll() is not None:
+                raise RuntimeError('source collector stopped unexpectedly')
+            if args.mode == 'both' and time.monotonic() >= next_delivery:
+                deliver(cfg, cache, reader)
+                next_delivery = time.monotonic() + 60
+            time.sleep(2)
+    except Exception as error:
+        failure = error
+    finally:
+        if child and child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+        checkpoint(cache, reader, previous)
+    if failure:
+        raise failure
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as error:
+        # Requests/boto exception strings can embed credentials; report types only.
+        emit('cloud-run-failed', category=type(error).__name__)
+        raise SystemExit(1)
