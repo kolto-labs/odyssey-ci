@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import sqlite3
 import time
+import mimetypes
+from urllib.parse import unquote, urlsplit
 from bs4 import BeautifulSoup
 
 
@@ -109,8 +111,11 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
                                   (file_id, revision, row['kind'], '0', row['url']))
                 source.db.commit()
                 version = source.db.execute('SELECT * FROM versions WHERE file_id=? AND revision=?', (file_id, revision)).fetchone()
+                hint = unquote(Path(urlsplit(response.url).path).name)
+                if hint in ('', 'attachment.php', 'index.php', 'download.php'):
+                    hint = 'attachment-' + str(row['id']) + (mimetypes.guess_extension(content_type.split(';')[0]) or '.bin')
                 source.store_file(version, response, hashlib.sha256(row['identity'].encode()).hexdigest(),
-                                  {'kind': row['kind'], 'public_link': True}, 'attachment-' + str(row['id']))
+                                  {'kind': row['kind'], 'public_link': True}, hint)
                 item = source.db.execute('SELECT * FROM items WHERE file_id=? AND revision=? ORDER BY cached_at DESC LIMIT 1', (file_id, revision)).fetchone()
                 captured = dict(row)
                 captured.update({key: item[key] for key in ('filename', 'sha256', 'size', 'manifest')})
