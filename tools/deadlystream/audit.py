@@ -30,7 +30,9 @@ def run(runtime, cfg, cache, reader):
             revision = 'site-resource-' + hashlib.sha256(row['identity'].encode()).hexdigest()[:24]
             item = {**row, 'file_id': -row['id'], 'revision': revision,
                     'row_key': hashlib.sha256(row['identity'].encode()).hexdigest()}
-            work.append((item, {'source_url': row['url'], 'history_id': '0', 'label': row['kind']}, bool(row.get('authenticated_retrieval'))))
+            labels = {'published-native-selector': 'published native selector; release association not inferred'}
+            label = labels.get(row['kind'], row['kind'])
+            work.append((item, {'source_url': row['url'], 'history_id': '0', 'label': label}, bool(row.get('authenticated_retrieval'))))
     grouped = {}
     for item, version, authenticated in work:
         grouped.setdefault(item['manifest'], []).append((item, version, authenticated))

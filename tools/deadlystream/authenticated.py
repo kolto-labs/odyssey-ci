@@ -52,9 +52,15 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
         nav = BeautifulSoup(bytes(body), 'html.parser').select_one('#elUserNav')
         if not nav or not any(re.search(r'/profile/' + member + r'[-/]', a.get('href', '')) for a in nav.select('a[href]')):
             soup = BeautifulSoup(bytes(body), 'html.parser')
+            text = soup.get_text(' ', strip=True).lower()
+            challenge = any(marker in bytes(body).lower() for marker in (b'cf-chl-', b'challenge-platform', b'cf-turnstile', b'just a moment'))
+            restriction = any(marker in text for marker in ('you are banned', 'awaiting validation', 'you do not have permission', 'your account has been suspended'))
+            title = soup.title.get_text(' ', strip=True)[:100] if soup.title else ''
             runtime.emit('site-session-not-accepted', user_navigation_present=bool(nav),
                          login_link_present=bool(soup.select('a[href*="/login/"]')),
                          member_profile_visible=bool(soup.find('a', href=re.compile(r'/profile/' + member + r'[-/]'))),
+                         page_title=title if re.fullmatch(r'[A-Za-z0-9 .,!?:()_/-]{0,100}', title) else 'unclassified',
+                         cloudflare_challenge=challenge, site_restriction_message=restriction,
                          html_bytes=len(body))
             raise RuntimeError('site did not acknowledge the provided signed-in session')
     validate_session()
