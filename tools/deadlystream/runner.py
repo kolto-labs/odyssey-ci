@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -100,13 +101,36 @@ def pointer(reader, key):
         return None
 
 
+def rate_policy(cache, reader, channel, apply=False):
+    key = PREFIX + channel + '-rate-policy.json'
+    saved = pointer(reader, key) or {'not_before': 0, 'minimum_interval': 0}
+    state = BASE / 'state'
+    state.mkdir(exist_ok=True)
+    values = {}
+    for field, filename in (('not_before', 'source-not-before'), ('minimum_interval', 'source-interval')):
+        try:
+            local = float((state / filename).read_text())
+        except (OSError, ValueError):
+            local = 0
+        remote = float(saved.get(field, 0))
+        if not math.isfinite(local) or not math.isfinite(remote) or min(local, remote) < 0:
+            raise ValueError('invalid source backoff metadata')
+        values[field] = max(local, remote)
+        if apply:
+            (state / filename).write_text(str(values[field]))
+    if values != {name: saved.get(name, 0) for name in values}:
+        cache.put(key, json.dumps(values).encode())
+    return values
+
+
 def extract_checkpoint(archive):
     exact = {'whole-site/whole-site.sqlite', 'output/whole-site-inventory.json',
+             'state/robots.txt', 'state/source-not-before', 'state/source-interval', 'state/source-last-request',
              'whole-site/native-baseline.json.gz', 'whole-site/known-native-ids.json',
              'whole-site/linked-catalogue/catalogue.sqlite',
              'whole-site/asset-state/catalogue.sqlite', 'whole-site/asset-state/catalogue.sqlite-wal',
              'whole-site/asset-state/catalogue.sqlite-shm'}
-    directories = {'whole-site', 'output', 'whole-site/pages', 'whole-site/sitemaps',
+    directories = {'whole-site', 'output', 'state', 'whole-site/pages', 'whole-site/sitemaps',
                    'whole-site/asset-state', 'whole-site/linked-catalogue',
                    'whole-site/linked-catalogue/page-observations',
                    'whole-site/linked-catalogue/page-observations/bytes',
@@ -166,6 +190,7 @@ def checkpoint(cache, reader, previous):
     root = BASE / 'whole-site'
     if not (root / 'whole-site.sqlite').exists():
         return previous
+    policy = rate_policy(cache, reader, 'public')
     # No source payloads or account credentials are included in the metadata index.
     original = sqlite3.connect(root / 'whole-site.sqlite')
     target = sqlite3.connect(root / 'checkpoint.sqlite')
@@ -204,6 +229,10 @@ def checkpoint(cache, reader, previous):
         for path in (root / 'native-baseline.json.gz', root / 'known-native-ids.json', root / 'sitemaps'):
             if path.exists():
                 archive.add(path, arcname='whole-site/' + path.name)
+        for name in ('robots.txt', 'source-not-before', 'source-interval', 'source-last-request'):
+            path = BASE / 'state' / name
+            if path.exists():
+                archive.add(path, arcname='state/' + name)
         # Content-addressed pages are included only after their completed capture
         # appears in the consistent SQLite backup. In-flight files are excluded.
         for old_path in page_paths:
@@ -219,6 +248,7 @@ def checkpoint(cache, reader, previous):
     if current != previous:
         raise RuntimeError('Checkpoint owner changed; immutable snapshot retained without overwriting pointer')
     value.update(index=index, counts=counts, run_id=os.environ.get('GITHUB_RUN_ID'),
+                 rate_policy=policy,
                  source_commit=os.environ.get('GITHUB_SHA'), at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     cache.put(PREFIX + 'latest.json', json.dumps(value).encode())
     emit('encrypted-checkpoint-verified', counts=counts, run_id=value['run_id'])
@@ -276,13 +306,22 @@ def main():
         deliver(cfg, cache, reader)
         return
     previous = restore(cfg, cache, reader)
+    channel = 'member' if args.mode == 'authenticated' else 'public'
+    rate_policy(cache, reader, channel, apply=True)
     if args.mode == 'authenticated':
         for cookie in json.loads((BASE / 'private/site-cookies.json').read_text()):
             if cookie['domain'] not in ('deadlystream.com', '.deadlystream.com', 'www.deadlystream.com') or cookie['name'] not in ('ips4_member_id', 'ips4_login_key', 'ips4_IPSSessionFront', 'ips4_device_key', 'ips4_loggedIn'):
                 raise ValueError('unexpected site-session scope')
             cache.session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'], path=cookie['path'], secure=True)
     # Explicit SOCKS for source only. TLS remains verified; never fall back direct.
-    response = cache.get('https://deadlystream.com/robots.txt')
+    try:
+        response = cache.get('https://deadlystream.com/robots.txt')
+    except Exception:
+        policy = rate_policy(cache, reader, channel)
+        if policy['not_before'] > time.time():
+            emit('provider-backoff-persisted', not_before=policy['not_before'])
+            return
+        raise
     robots = response.content
     response.close()
     (BASE / 'state/robots.txt').write_bytes(robots)

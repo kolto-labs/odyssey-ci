@@ -25,7 +25,8 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
     member = next((c['value'] for c in cookies if c['name'] == 'ips4_member_id'), '')
     if not re.fullmatch(r'[1-9][0-9]*', member):
         raise ValueError('missing member identity')
-    own_cfg = {**cfg, 'state': str(root / 'authenticated'), 'source_interval_seconds': 1.0}
+    own_cfg = {**cfg, 'state': str(root / 'authenticated'), 'source_interval_seconds': 1 / 3,
+               'provenance_flags': {'authenticated_retrieval': True}}
     catalogue_module = runtime.module('catalogue_cache')
     source = catalogue_module.Catalogue(own_cfg)
     for cookie in cookies:
@@ -98,6 +99,7 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             key = 'id' if table == 'files' else 'file_id'
             report['linked'][table] = [dict(row) for row in source.db.execute('SELECT * FROM ' + table + ' WHERE ' + key + '>0')]
         report['at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        report['rate_policy'] = runtime.rate_policy(cache, reader, 'member')
         report['source_public_checkpoint'] = public_checkpoint
         report['resource_attempts_terminal'] = sum(a.get('kind') == 'resource' and bool(terminal(a)) for a in report['attempts'])
         plain = gzip.compress(json.dumps(report).encode(), mtime=0)

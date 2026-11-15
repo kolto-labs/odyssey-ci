@@ -329,6 +329,7 @@ class Catalogue:
         return {'key':key,'sha256':sha,'size':len(data),'cipher_sha256':cipher}
 
     def store_file(self, version, response, row_key, selector, filename_hint=None):
+        selector = {**selector, **self.cfg.get('provenance_flags', {})}
         header = response.headers.get('Content-Disposition','')
         filename=download_filename(header) if header else (Path(filename_hint.replace('\\','/')).name[:240] if filename_hint else 'download')
         expected = response.headers.get('Content-Length')
