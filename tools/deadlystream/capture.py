@@ -29,10 +29,15 @@ def source():
  if not hasattr(LOCAL,'source'):LOCAL.source=m.Catalogue(cfg)
  return LOCAL.source
 
+DOWNLOAD_PATH=re.compile(r'\.(?:zip|rar|7z|jar|dmg|apk|tgz|tar|exe|msi|pdf|txt|docx?|xlsx?|rtf|odt|csv|json|xml|ini|cfg|py|sh|bat|dll|so|kmm|kmp|lua|nss|ncs|2da|tga|dds|mp[34]|wav|ogg|flac|bik|png|jpe?g|gif|webp|psd|xcf|blend|mdl|mdx|tpc|tlk|dlg|uti|utc|utp|utw|utm|uts|utt|ute|utd|are|git|gff|ifo|mod|rim|erf|lyt|vis|wok|pwk|dwk|bif|key|fbx|obj|stl|ttf|otf|gz|bz2|xz|(?:zip|7z)\.\d{3})$',re.I)
+
 def normalize(value,page):
  value=value.strip().replace('&amp;','&').replace('\\/','/')
  u=urlsplit(urljoin(page,value))
- if u.hostname not in ('deadlystream.com','www.deadlystream.com'):return
+ if u.hostname not in ('deadlystream.com','www.deadlystream.com'):
+  if u.scheme in ('http','https') and u.hostname and not u.username and not u.password:
+   return urlunsplit(('https',u.netloc,u.path,u.query,''))
+  return
  if u.path.endswith('/index.php') and u.query.startswith('/'):
   route,sep,query=u.query.partition('&');u=urlsplit(urlunsplit(('https','deadlystream.com',route,query,'')))
  path=u.path
@@ -43,11 +48,14 @@ OFFICIAL_PATHS={urlsplit(normalize(u,'https://deadlystream.com/')).path for u in
 
 def classify(u):
  p=urlsplit(u);q=dict(parse_qsl(p.query));path=p.path
+ if p.hostname not in ('deadlystream.com','www.deadlystream.com'):
+  if DOWNLOAD_PATH.search(path):return 'asset','external-linked-file'
+  return
  if q.get('do') and q['do']!='download':return
  if path.endswith('/index.php') and q.get('app')=='core' and q.get('module')=='attach' and q.get('section')=='attach' and q.get('attach_id','').isdigit():return 'asset','legacy-attachment'
  if path.endswith('/index.php') and q.get('app')=='downloads' and q.get('module')=='display' and q.get('section')=='screenshot':return 'page',u
  if path.startswith('/uploads/'):return 'asset','uploaded-resource'
- if re.search(r'\.(?:zip|rar|7z|jar|dmg|apk|tgz|tar|exe|msi|pdf|txt|docx?|xlsx?|lua|nss|ncs|2da|tga|dds|mp[34]|wav|ogg|flac|bik|png|jpe?g|gif|webp|psd|xcf|blend|mdl|mdx|tpc|tlk|dlg|uti|utc|utp|utw|utm|uts|utt|ute|utd|are|git|gff|ifo|mod|rim|erf|lyt|vis|wok|pwk|dwk|bif|key|fbx|obj|stl|ttf|otf|gz|bz2|xz|(?:zip|7z)\.\d{3})$',path,re.I):return 'asset','linked-file'
+ if DOWNLOAD_PATH.search(path):return 'asset','linked-file'
  if path.endswith('/attachment.php') and q.get('id','').isdigit():return 'asset','attachment'
  if q.get('do')=='download' and path.startswith('/gallery/'):return 'asset','gallery-original'
  if q.get('do')=='download' and '/files/file/' not in path:return 'asset','linked-download'
@@ -59,18 +67,22 @@ def classify(u):
   return 'page',urlunsplit(('https','deadlystream.com',path,urlencode(q),''))
 
 def queue(u,page,label=''):
+ observed=urljoin(page,u.strip().replace('&amp;','&').replace('\\/','/'))
  u=normalize(u,page)
  if not u:return
  cl=classify(u)
+ if not cl and label=='download-attribute' and not (urlsplit(u).hostname in ('deadlystream.com','www.deadlystream.com') and '/files/file/' in urlsplit(u).path):
+  cl=('asset','external-linked-file' if urlsplit(u).hostname not in ('deadlystream.com','www.deadlystream.com') else 'linked-download')
  if not cl:
-  if '/files/file/' in urlsplit(u).path and dict(parse_qsl(urlsplit(u).query)).get('do')=='download':queue(urlunsplit(('https','deadlystream.com',urlsplit(u).path,'','')),page,'native-download-parent')
+  if urlsplit(u).hostname in ('deadlystream.com','www.deadlystream.com') and '/files/file/' in urlsplit(u).path and dict(parse_qsl(urlsplit(u).query)).get('do')=='download':queue(urlunsplit(('https','deadlystream.com',urlsplit(u).path,'','')),page,'native-download-parent')
   return
  typ,kind=cl;cx=LOCAL.db if hasattr(LOCAL,'db') else c
+ reference=observed if urlsplit(u).hostname not in ('deadlystream.com','www.deadlystream.com') else u
  if typ=='page':cx.execute('INSERT OR IGNORE INTO pages(url,kind) VALUES(?,?)',(kind,'content'));return
  p=urlsplit(u);q=dict(parse_qsl(p.query));identity='attachment:'+q['id'] if kind=='attachment' else u
  cx.execute('INSERT OR IGNORE INTO assets(identity,url,kind) VALUES(?,?,?)',(identity,u,kind))
- cx.execute('INSERT OR IGNORE INTO refs(identity,page_url,label,source_url) VALUES(?,?,?,?)',(identity,page,label[:300],u))
- cx.execute('UPDATE refs SET source_url=? WHERE identity=? AND page_url=? AND source_url IS NULL',(u,identity,page))
+ cx.execute('INSERT OR IGNORE INTO refs(identity,page_url,label,source_url) VALUES(?,?,?,?)',(identity,page,label[:300],reference))
+ cx.execute('UPDATE refs SET source_url=? WHERE identity=? AND page_url=? AND source_url IS NULL',(reference,identity,page))
  if kind=='attachment':
   cx.execute('INSERT OR IGNORE INTO attachment_links(identity,url,page_url,label) VALUES(?,?,?,?)',(identity,u,page,label[:300]))
   if q.get('key') and not cx.execute('SELECT 1 FROM attachment_links WHERE identity=? AND url=? AND tried_at IS NOT NULL',(identity,u)).fetchone():
@@ -80,6 +92,7 @@ class Links(HTMLParser):
  def __init__(self,url):super().__init__(convert_charrefs=True);self.url=url
  def handle_starttag(self,tag,attrs):
   d=dict(attrs)
+  if tag=='a' and 'download' in d and d.get('href'):queue(d['href'],self.url,'download-attribute')
   for attr in ('href','src','data-src','data-fullurl','data-ipslightbox-src','data-ipslightbox-href','poster','content'):
    v=d.get(attr)
    if isinstance(v,str) and (attr!='content' or v.startswith(('http','/uploads/'))):queue(v,self.url,attr)
@@ -156,7 +169,9 @@ def worker(table):
      finally:response.close()
      body=bytes(body);digest=hashlib.sha256(body).hexdigest();folder=ROOT/'pages';folder.mkdir(exist_ok=True);path=folder/(digest+'.html.gz')
      if not path.exists():path.write_bytes(gzip.compress(body,mtime=0))
-     parse(body,response.url);cx.execute("INSERT OR REPLACE INTO pages(url,kind,state,sha,path,status,at) VALUES(?,?,?,?,?,?,?)",(r['url'],'resource-landing','captured',digest,str(path),response.status_code,m.stamp()));cx.commit()
+     if urlsplit(response.url).hostname in ('deadlystream.com','www.deadlystream.com'):parse(body,response.url)
+     elif re.search(br'<title[^>]*>\s*(?:one moment, please|just a moment)\.*\s*</title>',body,re.I):raise m.SourceError('source-browser-check-required',403)
+     cx.execute("INSERT OR REPLACE INTO pages(url,kind,state,sha,path,status,at) VALUES(?,?,?,?,?,?,?)",(r['url'],'resource-landing','captured',digest,str(path),response.status_code,m.stamp()));cx.commit()
      raise m.SourceError('source-returned-page-instead-of-download',response.status_code)
     aid=-r['id'];revision='site-resource-'+hashlib.sha256(r['identity'].encode()).hexdigest()[:24]
     s.db.execute('INSERT OR IGNORE INTO files(id,url,status) VALUES(?,?,?)',(aid,r['url'],'pending'))
@@ -189,7 +204,7 @@ saved_urls={r['path']:r['url'] for r in c.execute("SELECT path,url FROM pages WH
 legacy_sources=ROOT/'legacy-page-sources.json.gz'
 legacy_urls={}
 if legacy_sources.exists():legacy_urls={row['path']:row['urls'] for row in json.loads(gzip.decompress(legacy_sources.read_bytes()))['pages']}
-parsed_prefix='parsed-'+cfg.get('page_import_version','v5')+':'
+parsed_prefix='parsed-'+cfg.get('page_import_version','v6')+':'
 for file in list((BASE/'state/source-pages').glob('*.gz'))+list((ROOT/'pages').glob('*.gz')):
  if c.execute('SELECT 1 FROM meta WHERE key=?',(parsed_prefix+file.name,)).fetchone():continue
  try:

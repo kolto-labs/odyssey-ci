@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import sqlite3
 import time
+from urllib.parse import urlsplit
 
 BASE = Path(os.environ['DEADLYSTREAM_WORK_ROOT'])
 ROOT = BASE / 'whole-site'
@@ -41,7 +42,7 @@ while True:
         observed_pages = discovery.execute('SELECT url FROM pages').fetchall()
         for url, in observed_pages:
             match = re.search(r'/files/file/(\d+)', url)
-            if match and int(match[1]) not in known:
+            if match and urlsplit(url).hostname in ('deadlystream.com','www.deadlystream.com') and int(match[1]) not in known:
                 cache.db.execute('INSERT OR IGNORE INTO files(id,url) VALUES(?,?)', (int(match[1]), module.canonical(url)))
     cache.db.commit()
     for row in cache.db.execute("SELECT * FROM files WHERE status='pending'").fetchall():

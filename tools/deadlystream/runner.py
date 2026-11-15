@@ -64,7 +64,7 @@ def setup():
         'identity': str(identity), 'age': shutil.which('age'), 'state': str(BASE / 'state'),
         'source_proxy': 'socks5h://127.0.0.1:40000', 'source_require_proxy': True,
         'source_interval_seconds': 1 / 3, 'source_rate_state': str(BASE / 'state'),
-        'page_import_version': 'v5',
+        'page_import_version': 'v6',
         'source_policy_state': str(BASE / 'state'), 'catalogue_urls': str(BASE / 'file-urls.json'),
     }
     if not cfg['age']:
