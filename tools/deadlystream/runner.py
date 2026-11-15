@@ -307,5 +307,7 @@ if __name__ == '__main__':
         main()
     except Exception as error:
         # Requests/boto exception strings can embed credentials; report types only.
-        emit('cloud-run-failed', category=type(error).__name__)
+        emit('cloud-run-failed', category=type(error).__name__,
+             source_code=getattr(error, 'code', None) if type(error).__name__ == 'SourceError' else None,
+             http_status=getattr(error, 'status', None) if type(error).__name__ == 'SourceError' else None)
         raise SystemExit(1)
