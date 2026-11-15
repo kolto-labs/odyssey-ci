@@ -29,7 +29,11 @@ def source():
  if not hasattr(LOCAL,'source'):LOCAL.source=m.Catalogue(cfg)
  return LOCAL.source
 
-DOWNLOAD_PATH=re.compile(r'\.(?:zip|rar|7z|jar|dmg|apk|tgz|tar|exe|msi|pdf|txt|docx?|xlsx?|rtf|odt|csv|json|xml|ini|cfg|py|sh|bat|dll|so|kmm|kmp|lua|nss|ncs|2da|tga|dds|mp[34]|wav|ogg|flac|bik|png|jpe?g|gif|webp|psd|xcf|blend|mdl|mdx|tpc|tlk|dlg|uti|utc|utp|utw|utm|uts|utt|ute|utd|are|git|gff|ifo|mod|rim|erf|lyt|vis|wok|pwk|dwk|bif|key|fbx|obj|stl|ttf|otf|gz|bz2|xz|(?:zip|7z)\.\d{3})$',re.I)
+WEB_PAGE_SUFFIXES={'html','htm','shtml','php','asp','aspx','jsp','cgi','cfm','action','do'}
+
+def downloadable_path(path):
+ suffix=unquote(path).rsplit('/',1)[-1].rpartition('.')[2].lower()
+ return bool(re.fullmatch(r'[a-z0-9]{1,12}',suffix)) and suffix not in WEB_PAGE_SUFFIXES
 
 def normalize(value,page):
  value=value.strip().replace('&amp;','&').replace('\\/','/')
@@ -49,13 +53,13 @@ OFFICIAL_PATHS={urlsplit(normalize(u,'https://deadlystream.com/')).path for u in
 def classify(u):
  p=urlsplit(u);q=dict(parse_qsl(p.query));path=p.path
  if p.hostname not in ('deadlystream.com','www.deadlystream.com'):
-  if DOWNLOAD_PATH.search(path):return 'asset','external-linked-file'
+  if downloadable_path(path):return 'asset','external-linked-file'
   return
  if q.get('do') and q['do']!='download':return
  if path.endswith('/index.php') and q.get('app')=='core' and q.get('module')=='attach' and q.get('section')=='attach' and q.get('attach_id','').isdigit():return 'asset','legacy-attachment'
  if path.endswith('/index.php') and q.get('app')=='downloads' and q.get('module')=='display' and q.get('section')=='screenshot':return 'page',u
  if path.startswith('/uploads/'):return 'asset','uploaded-resource'
- if DOWNLOAD_PATH.search(path):return 'asset','linked-file'
+ if downloadable_path(path):return 'asset','linked-file'
  if path.endswith('/attachment.php') and q.get('id','').isdigit():return 'asset','attachment'
  if q.get('do')=='download' and path.startswith('/gallery/'):return 'asset','gallery-original'
  if q.get('do')=='download' and '/files/file/' not in path:return 'asset','linked-download'
