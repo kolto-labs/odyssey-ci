@@ -297,6 +297,24 @@ def deliver(cfg, cache, reader):
          failed=sum(not x.get('ok') for x in receipts), bytes=sum(x.get('size', 0) for x in receipts if x.get('ok')))
 
 
+def source_frontier_drained():
+    root = BASE / 'whole-site'
+    if not (root / 'status.json').exists():
+        return False
+    with sqlite3.connect(root / 'whole-site.sqlite') as db:
+        for table in ('pages', 'assets'):
+            if db.execute("SELECT count(*) FROM " + table + " WHERE state IN ('pending','fetching')").fetchone()[0]:
+                return False
+    linked = root / 'linked-catalogue/catalogue.sqlite'
+    if not linked.exists():
+        return False
+    with sqlite3.connect(linked) as db:
+        for table in ('files', 'versions'):
+            if db.execute("SELECT count(*) FROM " + table + " WHERE status='pending'").fetchone()[0]:
+                return False
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--minutes', type=int, default=25)
@@ -312,7 +330,14 @@ def main():
         module('audit').run(sys.modules[__name__], cfg, cache, reader)
         return
     if args.mode == 'deliver':
-        deliver(cfg, cache, reader)
+        end = time.monotonic() + args.minutes * 60
+        while time.monotonic() < end:
+            deliver(cfg, cache, reader)
+            queue = pointer(reader, PREFIX + 'drive-queue-status.json')
+            if queue and time.time() - queue['at_unix'] < 120 and queue['remaining'] == 0:
+                emit('drive-queue-drained-final-audit-required')
+                break
+            time.sleep(5)
         return
     previous = restore(cfg, cache, reader)
     channel = 'member' if args.mode == 'authenticated' else 'public'
@@ -361,6 +386,7 @@ def main():
         end = time.monotonic() + args.minutes * 60
         next_delivery = 0
         next_checkpoint = time.monotonic() + 300
+        drained_since = None
         while time.monotonic() < end and not stopping:
             if child.poll() is not None:
                 raise RuntimeError('source collector stopped unexpectedly')
@@ -378,6 +404,13 @@ def main():
             if time.monotonic() >= next_checkpoint:
                 previous = checkpoint(cache, reader, previous)
                 next_checkpoint = time.monotonic() + 300
+            if source_frontier_drained():
+                drained_since = drained_since or time.monotonic()
+                if time.monotonic() - drained_since >= 60:
+                    emit('source-frontier-drained-final-audit-required')
+                    break
+            else:
+                drained_since = None
             time.sleep(2)
     except Exception as error:
         failure = error
