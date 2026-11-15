@@ -328,6 +328,23 @@ def source_frontier_drained():
     return True
 
 
+def refresh_source_policy(cache):
+    response = cache.get('https://deadlystream.com/robots.txt')
+    robots = bytearray()
+    try:
+        for block in response.iter_content(65536):
+            robots.extend(block)
+            if len(robots) > 1024 * 1024:
+                raise ValueError('oversized source robots response')
+    finally:
+        response.close()
+    robots = bytes(robots)
+    if re.search(br'<(?:!doctype\s+html|html|head|title)(?:\s|>)', robots, re.I):
+        raise module('catalogue_cache').SourceError('source-browser-check-required', 403)
+    (BASE / 'state/robots.txt').write_bytes(robots)
+    emit('proxied-source-admitted', http_status=200, robots_sha256=hashlib.sha256(robots).hexdigest())
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--minutes', type=int, default=25)
@@ -368,31 +385,21 @@ def main():
     previous = restore(cfg, cache, reader)
     channel = 'member' if args.mode == 'authenticated' else 'public'
     rate_policy(cache, reader, channel, apply=True)
+    if args.mode == 'authenticated':
+        try:
+            module('authenticated').run(sys.modules[__name__], cfg, cache, reader, args.minutes, previous)
+        finally:
+            rate_policy(cache, reader, channel)
+        return
     # Explicit SOCKS for source only. TLS remains verified; never fall back direct.
     try:
-        response = cache.get('https://deadlystream.com/robots.txt')
+        refresh_source_policy(cache)
     except Exception:
         policy = rate_policy(cache, reader, channel)
         if policy['not_before'] > time.time():
             emit('provider-backoff-persisted', not_before=policy['not_before'])
             return
         raise
-    robots = bytearray()
-    try:
-        for block in response.iter_content(65536):
-            robots.extend(block)
-            if len(robots) > 1024 * 1024:
-                raise ValueError('oversized source robots response')
-    finally:
-        response.close()
-    robots = bytes(robots)
-    if re.search(br'<(?:!doctype\s+html|html|head|title)(?:\s|>)', robots, re.I):
-        raise module('catalogue_cache').SourceError('source-browser-check-required', 403)
-    (BASE / 'state/robots.txt').write_bytes(robots)
-    emit('proxied-source-admitted', http_status=200, robots_sha256=hashlib.sha256(robots).hexdigest())
-    if args.mode == 'authenticated':
-        module('authenticated').run(sys.modules[__name__], cfg, cache, reader, args.minutes, previous)
-        return
     if args.mode == 'probe':
         deliver(cfg, cache, reader)
         return
