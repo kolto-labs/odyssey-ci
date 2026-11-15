@@ -6,7 +6,7 @@ from urllib.parse import urljoin,urlsplit,urlunsplit,parse_qsl,urlencode,unquote
 from html.parser import HTMLParser
 BASE=Path(os.environ['DEADLYSTREAM_WORK_ROOT']); ROOT=BASE/'whole-site';ROOT.mkdir(mode=0o700,exist_ok=True)
 spec=importlib.util.spec_from_file_location('catalogue',BASE/'catalogue_cache.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-cfg=json.loads((BASE/'config.json').read_text());cfg.update(state=str(ROOT/'asset-state'),source_rate_state=str(BASE/'state'),source_policy_state=str(BASE/'state'),source_interval_seconds=0.333334)
+cfg=json.loads((BASE/'config.json').read_text());cfg.update(state=str(ROOT/'asset-state'),source_rate_state=str(BASE/'state'),source_policy_state=str(BASE/'state'),source_interval_seconds=0.166667)
 LOCAL=threading.local()
 def db():
  c=sqlite3.connect(ROOT/'whole-site.sqlite',timeout=90);c.row_factory=sqlite3.Row;c.execute('PRAGMA journal_mode=WAL');return c

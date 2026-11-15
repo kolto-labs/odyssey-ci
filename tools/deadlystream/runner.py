@@ -56,7 +56,7 @@ def setup():
         'writer_file': str(private / 'write.json'), 'reader_file': str(private / 'read.json'),
         'identity': str(identity), 'age': shutil.which('age'), 'state': str(BASE / 'state'),
         'source_proxy': 'socks5h://127.0.0.1:40000', 'source_require_proxy': True,
-        'source_interval_seconds': 0.333334, 'source_rate_state': str(BASE / 'state'),
+        'source_interval_seconds': 0.166667, 'source_rate_state': str(BASE / 'state'),
         'source_policy_state': str(BASE / 'state'), 'catalogue_urls': str(BASE / 'file-urls.json'),
     }
     if not cfg['age']:
