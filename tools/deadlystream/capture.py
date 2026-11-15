@@ -139,7 +139,7 @@ c.commit()
 
 def claim(cx,table):
  cx.execute('BEGIN IMMEDIATE')
- order="CASE WHEN kind='gallery-original' THEN 0 WHEN kind IN ('attachment','legacy-attachment','linked-download') OR lower(url) GLOB '*.zip*' OR lower(url) GLOB '*.rar*' OR lower(url) GLOB '*.7z*' OR lower(url) GLOB '*.exe*' THEN 1 WHEN kind='uploaded-resource' THEN 2 ELSE 3 END,id" if table=='assets' else "CASE WHEN url LIKE '%/gallery/image/%' THEN 0 WHEN url LIKE '%/files/file/%' AND (url LIKE '%tab=comments%' OR url LIKE '%tab=reviews%') THEN 1 WHEN url LIKE '%/topic/%' THEN 2 ELSE 3 END,url"
+ order="CASE WHEN kind='gallery-original' THEN 0 WHEN kind IN ('attachment','legacy-attachment','linked-download','linked-file','external-linked-file') OR lower(url) GLOB '*.zip*' OR lower(url) GLOB '*.rar*' OR lower(url) GLOB '*.7z*' OR lower(url) GLOB '*.exe*' THEN 1 WHEN kind='uploaded-resource' THEN 2 ELSE 3 END,id" if table=='assets' else "CASE WHEN url LIKE '%/gallery/image/%' THEN 0 WHEN url LIKE '%/files/file/%' AND (url LIKE '%tab=comments%' OR url LIKE '%tab=reviews%') THEN 1 WHEN url LIKE '%/topic/%' THEN 2 ELSE 3 END,url"
  row=cx.execute(f"SELECT * FROM {table} WHERE state='pending' AND next_attempt<={time.time()} ORDER BY {order} LIMIT 1").fetchone()
  if row:cx.execute(f"UPDATE {table} SET state='fetching',attempts=attempts+1 WHERE "+('id=?' if table=='assets' else 'url=?'),(row['id'] if table=='assets' else row['url'],))
  cx.commit();return row

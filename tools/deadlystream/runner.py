@@ -374,7 +374,18 @@ def source_frontier_drained():
 
 
 def refresh_source_policy(cache):
-    response = cache.get('https://deadlystream.com/robots.txt')
+    policy = BASE / 'state/robots.txt'
+    cached = policy.read_bytes() if policy.exists() else b''
+    html = br'<(?:!doctype\s+html|html|head|title)(?:\s|>)'
+    cached_valid = bool(re.search(br'^\s*user-agent\s*:', cached, re.I | re.M)) and not re.search(html, cached, re.I)
+    try:
+        response = cache.get('https://deadlystream.com/robots.txt')
+    except Exception as error:
+        if not cached_valid:
+            raise
+        emit('source-policy-verified-cache-retained', sha256=hashlib.sha256(cached).hexdigest(),
+             refresh_category=type(error).__name__)
+        return
     robots = bytearray()
     try:
         for block in response.iter_content(65536):
@@ -384,9 +395,13 @@ def refresh_source_policy(cache):
     finally:
         response.close()
     robots = bytes(robots)
-    if re.search(br'<(?:!doctype\s+html|html|head|title)(?:\s|>)', robots, re.I):
+    if re.search(html, robots, re.I):
+        if cached_valid:
+            emit('source-policy-verified-cache-retained', sha256=hashlib.sha256(cached).hexdigest(),
+                 refresh_category='browser-check-page')
+            return
         raise module('catalogue_cache').SourceError('source-browser-check-required', 403)
-    (BASE / 'state/robots.txt').write_bytes(robots)
+    policy.write_bytes(robots)
     emit('proxied-source-admitted', http_status=200, robots_sha256=hashlib.sha256(robots).hexdigest())
 
 
