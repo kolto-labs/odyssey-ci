@@ -137,23 +137,36 @@ def checkpoint(cache, reader, previous):
     original.backup(target)
     target.execute('PRAGMA journal_mode=DELETE')
     target.close()
-    original.row_factory = sqlite3.Row
-    counts = {name: dict(original.execute('SELECT state,count(*) FROM ' + name + ' GROUP BY state'))
-              for name in ('pages', 'assets')}
-    rows = [dict(row) for row in original.execute("SELECT * FROM assets WHERE state='captured'")]
     original.close()
-    index = private_object(cache, 'indexes', gzip.compress(json.dumps({'counts': counts, 'assets': rows}).encode(), mtime=0))
+    frozen = sqlite3.connect(root / 'checkpoint.sqlite')
+    frozen.row_factory = sqlite3.Row
+    counts = {name: dict(frozen.execute('SELECT state,count(*) FROM ' + name + ' GROUP BY state'))
+              for name in ('pages', 'assets')}
+    rows = [dict(row) for row in frozen.execute("SELECT * FROM assets WHERE state='captured'")]
+    page_paths = [row[0] for row in frozen.execute("SELECT DISTINCT path FROM pages WHERE path IS NOT NULL")]
+    frozen.close()
+    linked = {}
+    linked_path = root / 'linked-catalogue/catalogue.sqlite'
+    if linked_path.exists():
+        with sqlite3.connect(linked_path) as src, sqlite3.connect(root / 'linked-checkpoint.sqlite') as dst:
+            src.backup(dst)
+        with sqlite3.connect(root / 'linked-checkpoint.sqlite') as src:
+            src.row_factory = sqlite3.Row
+            linked = {table: [dict(row) for row in src.execute('SELECT * FROM ' + table)]
+                      for table in ('files', 'versions', 'items', 'gaps')}
+    index = private_object(cache, 'indexes', gzip.compress(json.dumps({'counts': counts, 'assets': rows, 'linked': linked}).encode(), mtime=0))
     package = BASE / 'checkpoint.tar.gz'
     with tarfile.open(package, 'w:gz') as archive:
         archive.add(root / 'checkpoint.sqlite', arcname='whole-site/whole-site.sqlite')
         archive.add(BASE / 'output/whole-site-inventory.json', arcname='output/whole-site-inventory.json')
-        for directory in (root / 'pages', root / 'asset-state'):
-            if directory.exists():
-                # Collector is stopped; SQLite WAL is checkpointed before packaging.
-                for db in directory.glob('*.sqlite'):
-                    with sqlite3.connect(db) as conn:
-                        conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-                archive.add(directory, arcname='whole-site/' + directory.name)
+        if linked:
+            archive.add(root / 'linked-checkpoint.sqlite', arcname='whole-site/linked-catalogue/catalogue.sqlite')
+        # Content-addressed pages are included only after their completed capture
+        # appears in the consistent SQLite backup. In-flight files are excluded.
+        for old_path in page_paths:
+            page = root / 'pages' / Path(old_path).name
+            if page.is_file():
+                archive.add(page, arcname='whole-site/pages/' + page.name)
     value = private_object(cache, 'checkpoints', package.read_bytes())
     recovered = read_private(reader, value, package.stat().st_size + 1024 * 1024)
     if hashlib.sha256(recovered).hexdigest() != hashlib.sha256(package.read_bytes()).hexdigest():
@@ -227,6 +240,7 @@ def main():
         deliver(cfg, cache, reader)
         return
     child = None
+    linked_child = None
     stopping = False
     def stop(signum, frame):
         nonlocal stopping
@@ -236,25 +250,33 @@ def main():
     failure = None
     try:
         child = subprocess.Popen([sys.executable, str(HERE / 'capture.py')], env=os.environ.copy())
+        linked_child = subprocess.Popen([sys.executable, str(HERE / 'linked.py')], env=os.environ.copy())
         end = time.monotonic() + args.minutes * 60
         next_delivery = 0
+        next_checkpoint = time.monotonic() + 300
         while time.monotonic() < end and not stopping:
             if child.poll() is not None:
                 raise RuntimeError('source collector stopped unexpectedly')
+            if linked_child.poll() is not None:
+                raise RuntimeError('linked native collector stopped unexpectedly')
             if args.mode == 'both' and time.monotonic() >= next_delivery:
                 deliver(cfg, cache, reader)
                 next_delivery = time.monotonic() + 60
+            if time.monotonic() >= next_checkpoint:
+                previous = checkpoint(cache, reader, previous)
+                next_checkpoint = time.monotonic() + 300
             time.sleep(2)
     except Exception as error:
         failure = error
     finally:
-        if child and child.poll() is None:
-            child.terminate()
-            try:
-                child.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait()
+        for process in (child, linked_child):
+            if process and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
         checkpoint(cache, reader, previous)
     if failure:
         raise failure
