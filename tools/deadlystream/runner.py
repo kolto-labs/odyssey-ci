@@ -294,7 +294,7 @@ def deliver(cfg, cache, reader):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--minutes', type=int, default=25)
-    parser.add_argument('--mode', choices=('capture', 'deliver', 'both', 'probe', 'authenticated'), default='both')
+    parser.add_argument('--mode', choices=('capture', 'deliver', 'both', 'probe', 'authenticated', 'audit'), default='both')
     args = parser.parse_args()
     if not 1 <= args.minutes <= 240:
         raise ValueError('minutes must be between 1 and 240')
@@ -302,6 +302,9 @@ def main():
         emit('site-session-setting-required', setting='DEADLYSTREAM_SESSION_COOKIES')
         raise SystemExit(2)
     cfg, cache, reader = setup()
+    if args.mode == 'audit':
+        module('audit').run(sys.modules[__name__], cfg, cache, reader)
+        return
     if args.mode == 'deliver':
         deliver(cfg, cache, reader)
         return
