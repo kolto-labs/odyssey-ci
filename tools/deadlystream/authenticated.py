@@ -73,6 +73,8 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             source.db.execute('INSERT OR IGNORE INTO ' + table + '(' + ','.join(fields) + ') VALUES(' + ','.join('?' for _ in fields) + ')', tuple(row[key] for key in fields))
     source.db.commit()
     def terminal(row):
+        if row.get('kind') == 'resource' and row.get('status') in (401, 403, 404, 410) and row.get('published_alternatives_checked') is not True:
+            return False
         return row.get('captured') or row.get('status') in (401, 403, 404, 410) or row.get('source_code') in (
             'authenticated-source-returned-page', 'historical-download-unavailable', 'download-unavailable',
             'source-empty-download', 'source-version-has-no-files', 'empty-download-selection',
@@ -92,6 +94,44 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             report['session_revalidation_failed'] = True
             raise
         next_validation = time.monotonic() + 300
+
+    def acquire_resource(row):
+        urls = [row['url']]
+        if row['kind'] == 'attachment':
+            urls.extend(value[0] for value in discovery.execute(
+                'SELECT DISTINCT url FROM attachment_links WHERE identity=? ORDER BY url', (row['identity'],))
+                if value[0] != row['url'])
+        last_error = None
+        for url in urls:
+            try:
+                response = source.get(url)
+                content_type = response.headers.get('Content-Type', '').lower()
+                if ('html' in content_type or 'json' in content_type) and 'attachment' not in response.headers.get('Content-Disposition', '').lower():
+                    response.close()
+                    raise catalogue_module.SourceError('authenticated-source-returned-page', response.status_code)
+                file_id = -row['id']
+                revision = 'site-resource-' + hashlib.sha256(row['identity'].encode()).hexdigest()[:24]
+                source.db.execute('INSERT OR IGNORE INTO files(id,url) VALUES(?,?)', (file_id, url))
+                source.db.execute('INSERT OR IGNORE INTO versions(file_id,revision,label,history_id,source_url) VALUES(?,?,?,?,?)',
+                                  (file_id, revision, row['kind'], '0', url))
+                source.db.commit()
+                version = dict(source.db.execute('SELECT * FROM versions WHERE file_id=? AND revision=?', (file_id, revision)).fetchone())
+                version['source_url'] = url
+                hint = unquote(Path(urlsplit(response.url).path).name)
+                if hint in ('', 'attachment.php', 'index.php', 'download.php'):
+                    hint = 'attachment-' + str(row['id']) + (mimetypes.guess_extension(content_type.split(';')[0]) or '.bin')
+                source.store_file(version, response, hashlib.sha256(row['identity'].encode()).hexdigest(),
+                                  {'kind': row['kind'], 'public_link': True}, hint)
+                item = source.db.execute('SELECT * FROM items WHERE file_id=? AND revision=? ORDER BY cached_at DESC LIMIT 1', (file_id, revision)).fetchone()
+                captured = dict(row)
+                captured.update({key: item[key] for key in ('filename', 'sha256', 'size', 'manifest')})
+                captured.update(url=url, state='captured', authenticated_retrieval=True, authenticated_status=200)
+                return captured
+            except catalogue_module.SourceError as error:
+                last_error = error
+                if error.status not in (401, 403, 404, 410) and error.code not in ('authenticated-source-returned-page', 'source-empty-download'):
+                    raise
+        raise last_error
     def persist():
         nonlocal previous
         report['linked'] = {}
@@ -124,30 +164,10 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             if row['identity'] in attempted:
                 continue
             revalidate()
-            result = {'kind': 'resource', 'identity': row['identity'], 'source_status': row['status']}
+            result = {'kind': 'resource', 'identity': row['identity'], 'source_status': row['status'],
+                      'published_alternatives_checked': True}
             try:
-                response = source.get(row['url'])
-                content_type = response.headers.get('Content-Type', '').lower()
-                if ('html' in content_type or 'json' in content_type) and 'attachment' not in response.headers.get('Content-Disposition', '').lower():
-                    response.close()
-                    raise catalogue_module.SourceError('authenticated-source-returned-page', response.status_code)
-                file_id = -row['id']
-                revision = 'site-resource-' + hashlib.sha256(row['identity'].encode()).hexdigest()[:24]
-                source.db.execute('INSERT OR IGNORE INTO files(id,url) VALUES(?,?)', (file_id, row['url']))
-                source.db.execute('INSERT OR IGNORE INTO versions(file_id,revision,label,history_id,source_url) VALUES(?,?,?,?,?)',
-                                  (file_id, revision, row['kind'], '0', row['url']))
-                source.db.commit()
-                version = source.db.execute('SELECT * FROM versions WHERE file_id=? AND revision=?', (file_id, revision)).fetchone()
-                hint = unquote(Path(urlsplit(response.url).path).name)
-                if hint in ('', 'attachment.php', 'index.php', 'download.php'):
-                    hint = 'attachment-' + str(row['id']) + (mimetypes.guess_extension(content_type.split(';')[0]) or '.bin')
-                source.store_file(version, response, hashlib.sha256(row['identity'].encode()).hexdigest(),
-                                  {'kind': row['kind'], 'public_link': True}, hint)
-                item = source.db.execute('SELECT * FROM items WHERE file_id=? AND revision=? ORDER BY cached_at DESC LIMIT 1', (file_id, revision)).fetchone()
-                captured = dict(row)
-                captured.update({key: item[key] for key in ('filename', 'sha256', 'size', 'manifest')})
-                captured.update(state='captured', authenticated_retrieval=True, authenticated_status=200)
-                report['assets'].append(captured)
+                report['assets'].append(acquire_resource(row))
                 result['captured'] = True
             except Exception as error:
                 result.update(captured=False, status=getattr(error, 'status', 0), category=type(error).__name__, source_code=getattr(error, 'code', None))
