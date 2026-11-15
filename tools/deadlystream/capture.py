@@ -41,7 +41,7 @@ def normalize(value,page):
  if u.path.endswith('/index.php') and u.query.startswith('/'):
   route,sep,query=u.query.partition('&');u=urlsplit(urlunsplit(('https','deadlystream.com',route,query,'')))
  path=u.path
- if re.match(r'^/forum/(?:topic|gallery|blogs|files|page)/',path):path=path[6:]
+ if re.match(r'^/forum/(?:topic|gallery|blogs|files|page|profile)/',path):path=path[6:]
  return urlunsplit(('https','deadlystream.com',path,u.query,''))
 
 OFFICIAL_PATHS={urlsplit(normalize(u,'https://deadlystream.com/')).path for u in json.loads((BASE/'output/whole-site-inventory.json').read_text())['urls'] if normalize(u,'https://deadlystream.com/')}
@@ -60,10 +60,10 @@ def classify(u):
  if q.get('do')=='download' and path.startswith('/gallery/'):return 'asset','gallery-original'
  if q.get('do')=='download' and '/files/file/' not in path:return 'asset','linked-download'
  if q.get('do') or any(k.lower() in ('csrfkey','token','auth') for k in q):return
- if path in OFFICIAL_PATHS or re.match(r'^/(?:topic/\d+|gallery/(?:image|album|category)/\d+|blogs/(?:entry|blog)/\d+|files/(?:file|category)/\d+|forum/\d+|page/)',path) or path in ('/files/','/gallery/','/blogs/','/forums/'):
+ if path in OFFICIAL_PATHS or re.match(r'^/(?:topic/\d+|gallery/(?:image|album|category)/\d+|blogs/(?:entry|blog)/\d+|files/(?:file|category)/\d+|profile/\d+|forum/\d+|page/)',path) or path in ('/files/','/gallery/','/blogs/','/forums/'):
   if any(k not in ('page','sortby','sortdirection','tab','changelog','_fromLogin') for k in q):return
   # Sorting duplicates do not add content, pagination does.
-  q={k:v for k,v in q.items() if k in ('page','changelog') or (k=='tab' and v in ('comments','reviews'))}
+  q={k:v for k,v in q.items() if k in ('page','changelog') or (k=='tab' and (v in ('comments','reviews') or (path.startswith('/profile/') and re.fullmatch(r'field_core_pfield_\d+',v))))}
   return 'page',urlunsplit(('https','deadlystream.com',path,urlencode(q),''))
 
 def queue(u,page,label=''):
