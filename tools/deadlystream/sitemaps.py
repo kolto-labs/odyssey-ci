@@ -17,6 +17,27 @@ def timestamp(value):
         return None
 
 
+def requeue_changed_pages(connection, url, modified, previous):
+    current = timestamp(modified)
+    if current is None:
+        return 0
+    base = url.split('?', 1)[0].rstrip('/')
+    escaped = base.replace('!', '!!').replace('%', '!%').replace('_', '!_')
+    rows = connection.execute("""SELECT url,at FROM pages
+        WHERE url=? OR url LIKE ? ESCAPE '!' OR url LIKE ? ESCAPE '!'""",
+        (base, escaped + '/%', escaped + '?%')).fetchall()
+    if not rows:
+        return 0
+    # The first refresh compares against every retained page capture. Later
+    # refreshes compare the last committed official modification timestamp.
+    before = timestamp(previous) if previous is not None else min(timestamp(row[1]) or 0 for row in rows)
+    if before is None or current <= before:
+        return 0
+    connection.executemany("UPDATE pages SET state='pending',next_attempt=0 WHERE url=? AND state<>'fetching'",
+                           [(row[0],) for row in rows])
+    return len(rows)
+
+
 def refresh(runtime, cache, reader):
     root = runtime.BASE / 'whole-site'
     baseline_file = root / 'native-baseline.json.gz'
@@ -70,10 +91,12 @@ def refresh(runtime, cache, reader):
     connection.execute('''CREATE TABLE IF NOT EXISTS native_updates(
         file_id INTEGER PRIMARY KEY,url TEXT,observed_modified TEXT,state TEXT DEFAULT 'pending')''')
     changed = 0
+    refreshed_pages = 0
     for url, modified in fresh.items():
         match = re.search(r'/files/file/(\d+)', url)
         key = 'official-lastmod:' + url
         previous = connection.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+        refreshed_pages += requeue_changed_pages(connection, url, modified, previous[0] if previous else None)
         if match:
             file_id = int(match[1])
             metadata = json.loads(known.get(file_id, {}).get('metadata') or '{}')
@@ -92,6 +115,8 @@ def refresh(runtime, cache, reader):
     connection.close()
     value = {**old, 'urls': sorted(set(old['urls']) | set(fresh)), 'last_refresh': {
         'index_sha256': index_sha, 'sitemaps': proofs, 'live_urls': len(fresh),
-        'retained_old_urls': len(set(old['urls']) - set(fresh)), 'changed_native_records': changed}}
+        'retained_old_urls': len(set(old['urls']) - set(fresh)), 'changed_native_records': changed,
+        'refreshed_existing_pages': refreshed_pages}}
     inventory_path.write_text(json.dumps(value))
-    runtime.emit('official-sitemaps-refreshed', maps=len(maps), live_urls=len(fresh), changed_native_records=changed)
+    runtime.emit('official-sitemaps-refreshed', maps=len(maps), live_urls=len(fresh), changed_native_records=changed,
+                 refreshed_existing_pages=refreshed_pages)
