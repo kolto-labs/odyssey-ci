@@ -22,7 +22,7 @@ import time
 HERE = Path(__file__).resolve().parent
 BASE = Path(os.environ.get('DEADLYSTREAM_WORK_ROOT', '/tmp/deadlystream-preservation'))
 PREFIX = 'whole-site/actions/'
-LAST_COMPLETED_DELIVERY = None
+DELIVERY = None
 
 
 def module(name):
@@ -266,47 +266,89 @@ def checkpoint(cache, reader, previous):
     return value
 
 
-def deliver(cfg, cache, reader, reverse=False):
-    global LAST_COMPLETED_DELIVERY
-    jobs = pointer(reader, PREFIX + 'drive-jobs/latest.json')
-    if not jobs:
-        emit('drive-queue-empty')
-        return
-    if jobs['cipher_sha256'] == LAST_COMPLETED_DELIVERY:
-        return
-    todo = json.loads(read_private(reader, jobs, 16 * 1024 * 1024))
-    receipts = []
-    mirror = module('mirror')
-    def run(job):
+class Delivery:
+    def __init__(self, cfg, cache, reader, workers, reverse):
+        self.cfg, self.cache, self.reader = cfg, cache, reader
+        self.workers, self.reverse = workers, reverse
+        self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
+        self.mirror = module('mirror')
+        self.active = {}
+        self.completed = set()
+        self.batch_sha = None
+        self.jobs = []
+
+    def run(self, job):
         job = dict(job)
         sha = job['sha256']
-        old = pointer(reader, PREFIX + 'drive-receipts/' + sha + '.json')
+        old = pointer(self.reader, PREFIX + 'drive-receipts/' + sha + '.json')
         if old and old.get('ok'):
             return old
         job.update(reader_module=str(BASE / 'catalogue_read.py'), cache_config=str(BASE / 'config.json'),
-                   catalogue_identity_file=cfg['identity'])
+                   catalogue_identity_file=self.cfg['identity'])
         job_file = BASE / 'private' / (sha + '.json')
         result_file = BASE / 'private' / (sha + '-result.json')
         job_file.write_text(json.dumps(job))
         try:
-            result = mirror.execute(job_file, result_file)
+            result = self.mirror.execute(job_file, result_file)
             result['github_run_id'] = os.environ.get('GITHUB_RUN_ID')
-            cache.put(PREFIX + 'drive-receipts/' + sha + '.json', json.dumps(result).encode())
+            # Preserve successful receipts if another lane completed this session.
+            latest = pointer(self.reader, PREFIX + 'drive-receipts/' + sha + '.json')
+            if latest and latest.get('ok'):
+                return latest
+            self.cache.put(PREFIX + 'drive-receipts/' + sha + '.json', json.dumps(result).encode())
             return result
         except Exception as error:
             return {'ok': False, 'sha256': sha, 'category': type(error).__name__}
         finally:
             job_file.unlink(missing_ok=True)
             result_file.unlink(missing_ok=True)
-    # The independent delivery lane starts at the opposite end of the batch.
-    # Both lanes use the same one-file resumable capability and verify its SHA.
-    jobs_to_run = list(reversed(todo['jobs'])) if reverse else todo['jobs']
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        receipts = list(pool.map(run, jobs_to_run))
-    if all(receipt.get('ok') for receipt in receipts):
-        LAST_COMPLETED_DELIVERY = jobs['cipher_sha256']
-    emit('drive-cloud-delivery', uploaded=sum(bool(x.get('ok')) for x in receipts),
-         failed=sum(not x.get('ok') for x in receipts), bytes=sum(x.get('size', 0) for x in receipts if x.get('ok')))
+
+    def collect(self):
+        receipts = []
+        for sha, future in list(self.active.items()):
+            if not future.done():
+                continue
+            try:
+                receipt = future.result()
+            except Exception as error:
+                receipt = {'ok': False, 'sha256': sha, 'category': type(error).__name__}
+            receipts.append(receipt)
+            if receipt.get('ok'):
+                self.completed.add(sha)
+            del self.active[sha]
+        if receipts:
+            emit('drive-cloud-delivery', uploaded=sum(bool(row.get('ok')) for row in receipts),
+                 failed=sum(not row.get('ok') for row in receipts), active=len(self.active),
+                 bytes=sum(row.get('size', 0) for row in receipts if row.get('ok')))
+
+    def step(self):
+        self.collect()
+        batch = pointer(self.reader, PREFIX + 'drive-jobs/latest.json')
+        if not batch:
+            return
+        if batch['cipher_sha256'] != self.batch_sha:
+            todo = json.loads(read_private(self.reader, batch, 16 * 1024 * 1024))
+            self.jobs = list(reversed(todo['jobs'])) if self.reverse else todo['jobs']
+            self.batch_sha = batch['cipher_sha256']
+        # Keep free workers moving while individual large or interrupted files run.
+        for job in self.jobs:
+            sha = job['sha256']
+            if sha in self.completed or sha in self.active:
+                continue
+            if len(self.active) >= self.workers:
+                break
+            self.active[sha] = self.pool.submit(self.run, job)
+
+    def close(self):
+        self.pool.shutdown(wait=True)
+        self.collect()
+
+
+def deliver(cfg, cache, reader, reverse=False, workers=8):
+    global DELIVERY
+    if DELIVERY is None:
+        DELIVERY = Delivery(cfg, cache, reader, workers, reverse)
+    DELIVERY.step()
 
 
 def source_frontier_drained():
@@ -374,7 +416,7 @@ def main():
     if args.mode == 'deliver':
         end = time.monotonic() + args.minutes * 60
         while time.monotonic() < end:
-            deliver(cfg, cache, reader, reverse=True)
+            deliver(cfg, cache, reader, reverse=True, workers=32)
             queue = pointer(reader, PREFIX + 'drive-queue-status.json')
             if queue and time.time() - queue['at_unix'] < 120 and queue['remaining'] == 0:
                 public = pointer(reader, PREFIX + 'latest.json') or {}
@@ -485,3 +527,6 @@ if __name__ == '__main__':
              source_code=getattr(error, 'code', None) if type(error).__name__ == 'SourceError' else None,
              http_status=getattr(error, 'status', None) if type(error).__name__ == 'SourceError' else None)
         raise SystemExit(1)
+    finally:
+        if DELIVERY is not None:
+            DELIVERY.close()
