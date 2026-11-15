@@ -23,6 +23,8 @@ for table in ('pages','assets'):
  if 'attempts' not in columns:c.execute('ALTER TABLE '+table+' ADD COLUMN attempts INTEGER DEFAULT 0')
  if 'next_attempt' not in columns:c.execute('ALTER TABLE '+table+' ADD COLUMN next_attempt REAL DEFAULT 0')
 c.commit()
+TRANSIENT_STATUSES=(429,500,502,503,504)
+TRANSIENT_CODES=('source-browser-check-required','source-proxy-unavailable','source-proxy-required','source-connection-failed','source-dns-unavailable','source-backoff-required','ConnectionError','ReadTimeout','ClientError','OperationalError')
 def source():
  if not hasattr(LOCAL,'source'):LOCAL.source=m.Catalogue(cfg)
  return LOCAL.source
@@ -110,7 +112,13 @@ if legacy.exists():
 c.commit()
 
 lock=(ROOT/'capture.lock').open('a+');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-c.execute("UPDATE pages SET state='pending' WHERE state='fetching'");c.execute("UPDATE assets SET state='pending' WHERE state='fetching'");c.commit()
+for table in ('pages','assets'):
+ c.execute("UPDATE "+table+" SET state='pending' WHERE state='fetching'")
+ # Earlier batches exhausted a five-attempt budget on temporary transport errors.
+ # Retain their attempt history and backoff while keeping the work retryable.
+ marks=','.join('?' for _ in TRANSIENT_CODES)
+ c.execute("UPDATE "+table+" SET state='pending' WHERE state='unavailable' AND (status IN (429,500,502,503,504) OR error IN ("+marks+"))",TRANSIENT_CODES)
+c.commit()
 
 def claim(cx,table):
  cx.execute('BEGIN IMMEDIATE')
@@ -169,8 +177,8 @@ def worker(table):
      alternative=cx.execute('SELECT url FROM attachment_links WHERE identity=? AND tried_at IS NULL AND url<>? ORDER BY url LIMIT 1',(r['identity'],r['url'])).fetchone()
      if alternative:
       cx.execute("UPDATE assets SET state='pending',url=?,error=?,status=?,next_attempt=0,at=? WHERE id=?",(alternative['url'],code,status,m.stamp(),key));cx.commit();print(json.dumps({'event':'published-attachment-alternative','id':key}),flush=True);continue
-   transient=status in (429,500,502,503,504) or code in ('source-browser-check-required','source-proxy-unavailable','source-proxy-required','source-connection-failed','source-dns-unavailable','source-backoff-required','ConnectionError','ReadTimeout','ClientError','OperationalError')
-   state='pending' if (transient and r['attempts']<5) or code in ('source-browser-check-required','source-proxy-unavailable','source-proxy-required') else 'unavailable'
+   transient=status in TRANSIENT_STATUSES or code in TRANSIENT_CODES
+   state='pending' if transient else 'unavailable'
    cx.execute(f"UPDATE {table} SET state=?,error=?,status=?,at=?,next_attempt=? WHERE {where}",(state,code,status,m.stamp(),time.time()+60*2**min(r['attempts'],5) if transient else 0,key));cx.commit()
    print(json.dumps({'event':'resource-gap','table':table,'id':key if table=='assets' else hashlib.sha256(key.encode()).hexdigest()[:16],'reason':code,'status':status}),flush=True)
 
