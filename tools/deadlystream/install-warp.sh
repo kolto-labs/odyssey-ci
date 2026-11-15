@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "${PRESERVATION_RUNNER_KIND:-}" = self-hosted ]; then
+  curl --silent --show-error --fail --max-time 20 --proxy socks5h://127.0.0.1:40000 https://www.cloudflare.com/cdn-cgi/trace | grep -q '^warp=on$'
+  printf 'Verified isolated cloud-side WARP relay.\n'
+  exit 0
+fi
 curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
 printf 'deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ noble main\n' | sudo tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
 sudo apt-get update -qq

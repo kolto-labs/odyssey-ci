@@ -2,6 +2,10 @@ name: Preserve member-accessible Deadly Stream downloads
 on:
   workflow_dispatch:
     inputs:
+      runner:
+        type: choice
+        options: [github, vps]
+        default: github
       minutes:
         type: string
         default: '60'
@@ -13,41 +17,18 @@ concurrency:
 jobs:
   preserve:
     if: github.repository == 'kolto-labs/odyssey-ci' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 300
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
-      - name: Install preservation dependencies
-        run: python -m pip install boto3==1.43.124 requests==2.34.2 beautifulsoup4==4.15.0 PySocks==1.7.1
-      - name: Establish verified cloud-side source proxy
-        run: bash tools/deadlystream/install-warp.sh
-      - name: Install the standard browser for site session validation
-        run: |
-          python -m pip install playwright==1.65.2
-          python -m playwright install --with-deps chromium
-          command -v xvfb-run >/dev/null || sudo apt-get install -y -qq xvfb
-      - name: Download directly to encrypted cloud storage and scoped Drive uploads
-        env:
-          DEADLYSTREAM_WORK_ROOT: ${{ runner.temp }}/deadlystream-preservation
-          DEADLYSTREAM_CACHE_WRITE_ACCESS_KEY_ID: ${{ secrets.DEADLYSTREAM_CACHE_WRITE_ACCESS_KEY_ID }}
-          DEADLYSTREAM_CACHE_WRITE_SECRET_ACCESS_KEY: ${{ secrets.DEADLYSTREAM_CACHE_WRITE_SECRET_ACCESS_KEY }}
-          DEADLYSTREAM_CACHE_READ_ACCESS_KEY_ID: ${{ secrets.DEADLYSTREAM_CACHE_READ_ACCESS_KEY_ID }}
-          DEADLYSTREAM_CACHE_READ_SECRET_ACCESS_KEY: ${{ secrets.DEADLYSTREAM_CACHE_READ_SECRET_ACCESS_KEY }}
-          DEADLYSTREAM_CACHE_DECRYPTION_IDENTITY: ${{ secrets.DEADLYSTREAM_CACHE_DECRYPTION_IDENTITY }}
-          DEADLYSTREAM_CACHE_BUCKET: ${{ vars.DEADLYSTREAM_CACHE_BUCKET }}
-          DEADLYSTREAM_CACHE_ENDPOINT: ${{ vars.DEADLYSTREAM_CACHE_ENDPOINT }}
-          DEADLYSTREAM_CACHE_ENCRYPTION_RECIPIENT: ${{ vars.DEADLYSTREAM_CACHE_ENCRYPTION_RECIPIENT }}
-          DEADLYSTREAM_SESSION_COOKIES: ${{ secrets.DEADLYSTREAM_SESSION_COOKIES }}
-          PRESERVATION_MODE: authenticated
-          PRESERVATION_MINUTES: ${{ inputs.minutes }}
-        run: xvfb-run -a python tools/deadlystream/runner.py --mode "$PRESERVATION_MODE" --minutes "$PRESERVATION_MINUTES"
-      - name: Remove transient credentials and plaintext workspace
-        if: always()
-        env:
-          PRESERVATION_ROOT: ${{ runner.temp }}/deadlystream-preservation
-        run: rm -rf -- "$PRESERVATION_ROOT"
+    uses: ./.github/workflows/deadlystream-source-job.yml
+    with:
+      mode: authenticated
+      runner: ${{ inputs.runner }}
+      minutes: ${{ inputs.minutes }}
+      bucket: ${{ vars.DEADLYSTREAM_CACHE_BUCKET }}
+      endpoint: ${{ vars.DEADLYSTREAM_CACHE_ENDPOINT }}
+      recipient: ${{ vars.DEADLYSTREAM_CACHE_ENCRYPTION_RECIPIENT }}
+    secrets:
+      DEADLYSTREAM_CACHE_WRITE_ACCESS_KEY_ID: ${{ secrets.DEADLYSTREAM_CACHE_WRITE_ACCESS_KEY_ID }}
+      DEADLYSTREAM_CACHE_WRITE_SECRET_ACCESS_KEY: ${{ secrets.DEADLYSTREAM_CACHE_WRITE_SECRET_ACCESS_KEY }}
+      DEADLYSTREAM_CACHE_READ_ACCESS_KEY_ID: ${{ secrets.DEADLYSTREAM_CACHE_READ_ACCESS_KEY_ID }}
+      DEADLYSTREAM_CACHE_READ_SECRET_ACCESS_KEY: ${{ secrets.DEADLYSTREAM_CACHE_READ_SECRET_ACCESS_KEY }}
+      DEADLYSTREAM_CACHE_DECRYPTION_IDENTITY: ${{ secrets.DEADLYSTREAM_CACHE_DECRYPTION_IDENTITY }}
+      DEADLYSTREAM_SESSION_COOKIES: ${{ secrets.DEADLYSTREAM_SESSION_COOKIES }}
