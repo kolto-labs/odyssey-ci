@@ -51,7 +51,11 @@ def run(runtime, cfg, cache, reader, minutes, public_checkpoint=None):
             raise RuntimeError('site account is restricted; authenticated capture stopped')
         nav = BeautifulSoup(bytes(body), 'html.parser').select_one('#elUserNav')
         if not nav or not any(re.search(r'/profile/' + member + r'[-/]', a.get('href', '')) for a in nav.select('a[href]')):
-            runtime.emit('site-session-not-accepted')
+            soup = BeautifulSoup(bytes(body), 'html.parser')
+            runtime.emit('site-session-not-accepted', user_navigation_present=bool(nav),
+                         login_link_present=bool(soup.select('a[href*="/login/"]')),
+                         member_profile_visible=bool(soup.find('a', href=re.compile(r'/profile/' + member + r'[-/]'))),
+                         html_bytes=len(body))
             raise RuntimeError('site did not acknowledge the provided signed-in session')
     validate_session()
     runtime.emit('site-session-admitted', scope='public-linked downloads only; no private forum crawl')

@@ -311,11 +311,6 @@ def main():
     previous = restore(cfg, cache, reader)
     channel = 'member' if args.mode == 'authenticated' else 'public'
     rate_policy(cache, reader, channel, apply=True)
-    if args.mode == 'authenticated':
-        for cookie in json.loads((BASE / 'private/site-cookies.json').read_text()):
-            if cookie['domain'] not in ('deadlystream.com', '.deadlystream.com', 'www.deadlystream.com') or cookie['name'] not in ('ips4_member_id', 'ips4_login_key', 'ips4_IPSSessionFront', 'ips4_device_key', 'ips4_loggedIn'):
-                raise ValueError('unexpected site-session scope')
-            cache.session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'], path=cookie['path'], secure=True)
     # Explicit SOCKS for source only. TLS remains verified; never fall back direct.
     try:
         response = cache.get('https://deadlystream.com/robots.txt')
