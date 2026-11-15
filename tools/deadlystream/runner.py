@@ -49,6 +49,10 @@ def setup():
             'secret_access_key': os.environ.pop('DEADLYSTREAM_CACHE_' + kind.upper() + '_SECRET_ACCESS_KEY')}))
     identity = private / 'catalogue.agekey'
     identity.write_text(os.environ.pop('DEADLYSTREAM_CACHE_DECRYPTION_IDENTITY'))
+    site_session = os.environ.pop('DEADLYSTREAM_SESSION_COOKIES', '')
+    if site_session:
+        json.loads(site_session)
+        (private / 'site-cookies.json').write_text(site_session)
     cfg = {
         'bucket': os.environ.get('DEADLYSTREAM_CACHE_BUCKET') or 'kolto-deadlystream-cache',
         'endpoint': os.environ.get('DEADLYSTREAM_CACHE_ENDPOINT') or 'https://e4eb3dbeb12beaacc177041231790454.r2.cloudflarestorage.com',
@@ -221,7 +225,7 @@ def deliver(cfg, cache, reader):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--minutes', type=int, default=25)
-    parser.add_argument('--mode', choices=('capture', 'deliver', 'both', 'probe'), default='both')
+    parser.add_argument('--mode', choices=('capture', 'deliver', 'both', 'probe', 'authenticated'), default='both')
     args = parser.parse_args()
     if not 1 <= args.minutes <= 240:
         raise ValueError('minutes must be between 1 and 240')
@@ -236,6 +240,9 @@ def main():
     response.close()
     (BASE / 'state/robots.txt').write_bytes(robots)
     emit('proxied-source-admitted', http_status=200, robots_sha256=hashlib.sha256(robots).hexdigest())
+    if args.mode == 'authenticated':
+        module('authenticated').run(sys.modules[__name__], cfg, cache, reader, args.minutes)
+        return
     if args.mode == 'probe':
         deliver(cfg, cache, reader)
         return
