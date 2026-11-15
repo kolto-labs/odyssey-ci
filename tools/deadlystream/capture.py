@@ -24,7 +24,7 @@ for table in ('pages','assets'):
  if 'next_attempt' not in columns:c.execute('ALTER TABLE '+table+' ADD COLUMN next_attempt REAL DEFAULT 0')
 c.commit()
 TRANSIENT_STATUSES=(429,500,502,503,504)
-TRANSIENT_CODES=('source-browser-check-required','source-proxy-unavailable','source-proxy-required','source-connection-failed','source-dns-unavailable','source-backoff-required','ConnectionError','ReadTimeout','ClientError','OperationalError')
+TRANSIENT_CODES=('source-browser-check-required','source-proxy-unavailable','source-proxy-required','source-connection-failed','source-dns-unavailable','source-backoff-required','ConnectionError','ReadTimeout','ClientError','OperationalError','RuntimeError','encryption-failed','remote-upload-integrity-failed','remote-receipt-integrity-failed','existing-object-metadata-invalid','concurrent-object-metadata-invalid')
 def source():
  if not hasattr(LOCAL,'source'):LOCAL.source=m.Catalogue(cfg)
  return LOCAL.source
@@ -213,6 +213,10 @@ def worker(table):
     cx.execute("UPDATE assets SET state='captured',status=200,error=NULL,filename=?,sha256=?,size=?,manifest=?,at=? WHERE id=?",(item['filename'],item['sha256'],item['size'],item['manifest'],m.stamp(),key));cx.commit()
   except Exception as e:
    code=e.code if isinstance(e,m.SourceError) else type(e).__name__;status=getattr(e,'status',0)
+   if isinstance(e,RuntimeError) and str(e) in TRANSIENT_CODES:code=str(e)
+   if isinstance(e,RuntimeError):
+    import traceback
+    print(json.dumps({'event':'download-processing-retry','reason':code,'frames':[{'file':Path(frame.filename).name,'line':frame.lineno,'function':frame.name} for frame in traceback.extract_tb(e.__traceback__)]}),flush=True)
    cx.rollback()
    if table=='assets' and r['kind']=='attachment':
     cx.execute('UPDATE attachment_links SET tried_at=?,status=?,error=? WHERE identity=? AND url=?',(m.stamp(),status,code,r['identity'],r['url']))
