@@ -241,6 +241,8 @@ def main():
         return
     child = None
     linked_child = None
+    delivery_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    delivery_task = None
     stopping = False
     def stop(signum, frame):
         nonlocal stopping
@@ -259,8 +261,14 @@ def main():
                 raise RuntimeError('source collector stopped unexpectedly')
             if linked_child.poll() is not None:
                 raise RuntimeError('linked native collector stopped unexpectedly')
-            if args.mode == 'both' and time.monotonic() >= next_delivery:
-                deliver(cfg, cache, reader)
+            if delivery_task and delivery_task.done():
+                try:
+                    delivery_task.result()
+                except Exception as error:
+                    emit('drive-batch-retry', category=type(error).__name__)
+                delivery_task = None
+            if args.mode == 'both' and delivery_task is None and time.monotonic() >= next_delivery:
+                delivery_task = delivery_pool.submit(deliver, cfg, cache, reader)
                 next_delivery = time.monotonic() + 60
             if time.monotonic() >= next_checkpoint:
                 previous = checkpoint(cache, reader, previous)
@@ -278,6 +286,8 @@ def main():
                     process.kill()
                     process.wait()
         checkpoint(cache, reader, previous)
+        # Persist source state before waiting for a slow Drive transfer to finish.
+        delivery_pool.shutdown(wait=True)
     if failure:
         raise failure
 
