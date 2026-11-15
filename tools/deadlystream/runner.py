@@ -377,8 +377,17 @@ def main():
             emit('provider-backoff-persisted', not_before=policy['not_before'])
             return
         raise
-    robots = response.content
-    response.close()
+    robots = bytearray()
+    try:
+        for block in response.iter_content(65536):
+            robots.extend(block)
+            if len(robots) > 1024 * 1024:
+                raise ValueError('oversized source robots response')
+    finally:
+        response.close()
+    robots = bytes(robots)
+    if re.search(br'<(?:!doctype\s+html|html|head|title)(?:\s|>)', robots, re.I):
+        raise module('catalogue_cache').SourceError('source-browser-check-required', 403)
     (BASE / 'state/robots.txt').write_bytes(robots)
     emit('proxied-source-admitted', http_status=200, robots_sha256=hashlib.sha256(robots).hexdigest())
     if args.mode == 'authenticated':
