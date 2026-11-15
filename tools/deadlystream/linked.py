@@ -38,7 +38,8 @@ while True:
                 cache.db.execute("INSERT INTO files(id,url,status) VALUES(?,?,'pending') ON CONFLICT(id) DO UPDATE SET url=excluded.url,status='pending',error=NULL", (file_id, module.canonical(url)))
             cache.db.commit()
             discovery.executemany("UPDATE native_updates SET state='admitted' WHERE file_id=?", [(file_id,) for file_id, url in updates])
-        for url, in discovery.execute('SELECT url FROM pages'):
+        observed_pages = discovery.execute('SELECT url FROM pages').fetchall()
+        for url, in observed_pages:
             match = re.search(r'/files/file/(\d+)', url)
             if match and int(match[1]) not in known:
                 cache.db.execute('INSERT OR IGNORE INTO files(id,url) VALUES(?,?)', (int(match[1]), module.canonical(url)))
@@ -59,4 +60,7 @@ while True:
             cache.failure('versions', version, error)
     print(json.dumps({'event': 'linked-native-pass', 'files': cache.db.execute('SELECT count(*) FROM files').fetchone()[0],
                       'items': cache.db.execute('SELECT count(*) FROM items').fetchone()[0]}), flush=True)
+    pass_file = ROOT / 'linked-last-pass.new'
+    pass_file.write_text(json.dumps({'discovery_page_count': len(observed_pages), 'at_unix': time.time()}))
+    pass_file.replace(ROOT / 'linked-last-pass.json')
     time.sleep(90)

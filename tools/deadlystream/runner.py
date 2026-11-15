@@ -299,12 +299,16 @@ def deliver(cfg, cache, reader):
 
 def source_frontier_drained():
     root = BASE / 'whole-site'
-    if not (root / 'status.json').exists():
+    if not (root / 'status.json').exists() or not (root / 'linked-last-pass.json').exists():
         return False
     with sqlite3.connect(root / 'whole-site.sqlite') as db:
+        page_count = db.execute('SELECT count(*) FROM pages').fetchone()[0]
         for table in ('pages', 'assets'):
             if db.execute("SELECT count(*) FROM " + table + " WHERE state IN ('pending','fetching')").fetchone()[0]:
                 return False
+    last_pass = json.loads((root / 'linked-last-pass.json').read_text())
+    if last_pass['discovery_page_count'] < page_count:
+        return False
     linked = root / 'linked-catalogue/catalogue.sqlite'
     if not linked.exists():
         return False
